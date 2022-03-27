@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 
-def extract_volume_history(order_history: list) -> tuple(float, float):
+def extract_volume_history(order_history: list) -> tuple[float, float]:
     volume_30_days = 0
     volume_7_days = 0
 

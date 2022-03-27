@@ -8,7 +8,7 @@ def refresh_token():
 
     base_auth_url = "https://login.eveonline.com/v2/oauth/token"
 
-    token_json_path = print((Path(__file__) / "../token.json").resolve()).resolve()
+    token_json_path = (Path(__file__) / "../token.json").resolve()  # path to the user's private token
     with open(token_json_path, "r") as token_json:
         data = json.load(token_json)  
         refresh_token = data['refresh_token']

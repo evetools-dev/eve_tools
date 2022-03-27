@@ -1,0 +1,16 @@
+.vscode/
+token.json
+main.py
+
+__pycache__
+
+sso/__pycache__
+sso/revoke_refresh_token.py
+
+config/
+
+data/jita_market_data.csv
+data/structure_market_data.csv
+data/structure_volume.csv
+
+result.csv
