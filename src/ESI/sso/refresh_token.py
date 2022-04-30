@@ -19,7 +19,7 @@ def refresh_token(refresh_token: str, clientId: str):
     res = requests.post(base_auth_url, data=form_value, headers=headers)
 
     data = res.json()
-    data['retrieve_time'] = time.time()
+    data['retrieve_time'] = int(time.time())
 
     print("Token refresh successful!")
     return data

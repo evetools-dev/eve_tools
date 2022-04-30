@@ -106,7 +106,7 @@ class ESITokens(object):
             token_.retrieve_time = new_token_dict["retrieve_time"]
             token_.refresh_token = new_token_dict["refresh_token"]
             # character_name and clientId field should not change.
-            self._save_flag = self._save_flag and True
+            self._save_flag = True
 
     def generate(self, print_info: bool = False) -> None:
         """Generates new token for the Application.
@@ -233,6 +233,7 @@ class ESITokens(object):
 
         Searches for sel.tokens and get the reference of Token with character_name = cname.
         Caller can pass in cname="any" to indicate getting any Token without considering cname.
+        Token is refreshed before return if the "update_time" threshold is met.
 
         Args:
             cname: A string of the character name, acting as a key for a Token.
@@ -244,9 +245,12 @@ class ESITokens(object):
             ValueError: No Token matches character_name = {cname}.
         """
         if cname == "any" and self.tokens:
-            return self.tokens[0]
+            token = self.tokens[0]
+            self.refresh(token.character_name)
+            return token
         for token_ in self.tokens:
             if token_.character_name == cname:
+                self.refresh(token_.character_name)
                 return token_
         raise ValueError(f"No Token matches character_name = {cname}.")
 
