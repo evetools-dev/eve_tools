@@ -33,7 +33,7 @@ class ESITokens(object):
 
     Each Application has a unique clientId, which can be used to merge with all Token(s) with the same clientId.
     Each Token has a unique (clientId, character_name) pair, acting as key for each token.
-    The Tokens class hold all Token(s) with the given clientId, and each Token can be accessed using cname.
+    The ESITokens class hold all Token(s) with the given clientId, and each Token can be accessed using cname.
     
     This class effectively performs one read when initializing, and one read & write upon exiting.
     Class methods make effect on a buffer, self.tokens, and local files are updated when save() or use "with" statement.
@@ -48,15 +48,15 @@ class ESITokens(object):
             All tokens generated will have the clientId field attached as a key.
         update_time: int (seconds)
             Refresh Token(s) if at least update_time passed since last refresh.
-            Default 1200 seconds. EVE ESI requires tokens are effective for 1199 seconds after generation.
+            Default 1198 seconds. EVE ESI requires tokens are effective for 1199 seconds after generation.
 
     Example usage:
     >>> app = Application(clientId, scope, callbackURL)
-    >>> with open(Tokens(app)) as tokens:
-            # do something
-
-        # or use the class without with:
-    >>> tokens = Tokens(app)
+    >>> with ESITokens(app) as tokens:
+    >>>     # do something, such as generate token:
+    >>>     tokens.generate()
+    >>> # or use the class without with:
+    >>> tokens = ESITokens(app)
     >>> # do something
     >>> tokens.save()   # store change to local file
     """
@@ -68,7 +68,7 @@ class ESITokens(object):
 
         self.tokens = []            # list of tokens for the App
 
-        self._update_time = kwd.get("update_time", 1200)    # default update every 1200 seconds
+        self._update_time = kwd.get("update_time", 1198)    # ESI token lifespane is 1199 seconds, 1198 for safety
 
         self._save_flag = False     # Need to save() or not. Every method that changes self.tokens set this to True.
 
