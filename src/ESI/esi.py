@@ -1,6 +1,6 @@
 import asyncio
 import aiohttp
-from typing import Optional
+from typing import Optional, Union
 
 from .token import ESITokens
 from .metadata import ESIMetadata, ESIRequest
@@ -30,7 +30,7 @@ class ESI(object):
         self._app_changed = False
 
     def get(self, key: str, generate_token: Optional[bool] = False, **kwd) -> dict:
-        """Request gets an ESI API.
+        """Requests GET an ESI API.
 
         Checks input parameters and send asynchronous GET request to ESI server.
         The usage is similar to requests.get, supporting headers and params.
@@ -57,13 +57,69 @@ class ESI(object):
         Example:
         >>> from src.ESI import ESIClient   # ESIClient is an instance instantiated upon import
         >>> data = ESIClient.get("/markets/structures/{structure_id}/", structure_id=1035466617946)
+        """
+        return self.request("get", key, generate_token, **kwd)
 
+    def head(self, key: str, generate_token: Optional[bool] = False, **kwd) -> dict:
+        """Request HEAD an ESI API.
+
+        Checks input parameters and send asynchronous HEAD request to ESI server.
+        The usage is similar to ESIClient.get method, with same parameters.
+        Parameters are enforced similar to the "Try it out" function on the ESI website.
+        Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
+        
+        Args:
+            key: A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
+                Keys should be copy-pasted from ESI website. Invalid keys are rejected.
+            generate_token: A bool telling get to generate new token (probably with different character) for the request.
+            kwd.params: A dictionary containing parameters for the request. 
+                Required params indicated by ESI are enforced. Optional params are filled in with default values.
+            kwd.headers: A dictionary containing headers for the request. Request Token is not necessary in this headers. 
+                If headers["Authorization"] field is provided, skips all Token operations.
+                EVE ESI does not require headers info, but supplying with User-Agent, etc., is recommended.
+            kwd.cname: A string of character name. Token with cname would be used for the request.
+        
+        Returns:
+            A dictionary containing headers from ESI request.
+
+        Raises:
+            NotImplementedError: Request type POST/DELETE/PUT is not supported.
+
+        Example:
+        >>> from src.ESI import ESIClient       # ESIClient is an instance instantiated upon import
+        >>> headers = ESIClient.head("/markets/structures/{structure_id}/", structure_id=sid, page=1)
+        >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
+        """
+        return self.request("head", key, generate_token, **kwd)
+
+    def request(self, method: str, key: str, generate_token: Optional[bool] = False, **kwd):
+        """Sends request to an ESI API.
+
+        Checks input parameters and send asynchronous request to ESI server.
+        The usage is similar to requests.request, supporting headers and params.
+        Request method is checked against the key to see if the API supports the given method.
+        Parameters are enforced similar to the "Try it out" function on the ESI website.
+        Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
+        
+        Args:
+            key: A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
+                Keys should be copy-pasted from ESI website. Invalid keys are rejected.
+            generate_token: A bool telling get to generate new token (probably with different character) for the request.
+            kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
+        
+        Returns:
+            A dictionary containing json serialized data from ESI.
+
+        Raises:
+            NotImplementedError: Request type POST/DELETE/PUT is not supported.
         """
         self._check_key(key)
 
         api_request = self._metadata[key]
-        if api_request.request_type != "get":
+        if api_request.request_type not in ["get", "head"]:
             raise NotImplementedError(f"Request type {api_request.request_type} is not supported.")
+
+        self._check_method(api_request, method)
 
         params = kwd.get("params", {})
         api_request.params.update(params)
@@ -84,8 +140,8 @@ class ESI(object):
         # For my application (web request), aiohttp kind of like non-blocking accept in C, 
         # where I need to use epoll (or select) to interrupt the blocking accept and do something else (like servering a client).
         # Something cool and slightly difficult to understand: https://stackoverflow.com/questions/49005651/how-does-asyncio-actually-work
-        res = self._event_loop.run_until_complete(self.async_request(api_request))
-
+        res = self._event_loop.run_until_complete(self.async_request(api_request, method))
+        
         return res
 
     def add_app_generate_token(self, clientId: str, scope: str, callbackURL: Optional[str] = None) -> None:
@@ -129,7 +185,7 @@ class ESI(object):
         with ESITokens(new_app) as token:
             token.generate()
 
-    async def async_request(self, api_request: ESIRequest):
+    async def async_request(self, api_request: ESIRequest, method: str) -> dict:
         """Asynchronous requests to ESI API.
 
         Uses aiohttp to asynchronously request GET to ESI API. 
@@ -139,17 +195,23 @@ class ESI(object):
         Args:
             api_request: ESIRequest
                 A fully initialized ESIRequest with url, params, headers field filled in, given to aiohttp.ClientSession.get.
+            method: str
+                A str for HTTP request method.
         
         Returns:
-            A dictionary containing the response body. Memory allocation assumed not to be a problem.
+            A dictionary containing the response body or response header. Memory allocation assumed not to be a problem.
         """
         if not self._async_session:
             self._async_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False), raise_for_status=True)   # default maximum 100 connections
 
         # no encoding: "4-HWF" stays what it is
-        async with self._async_session.get(api_request.url, params=api_request.params, headers=api_request.headers) as req:
-            res = await req.json()      # read entire response to memory, which shouldn't be a problem now.
-        return res
+        if method == "get":
+            async with self._async_session.get(api_request.url, params=api_request.params, headers=api_request.headers) as req:
+                return await req.json()      # read entire response to memory, which shouldn't be a problem now.
+        elif method == "head":
+            async with self._async_session.head(api_request.url, params=api_request.params, headers=api_request.headers) as req:
+                return dict(req.headers)
+
 
     def _get_auth_headers(self, tokens: ESITokens, cname: Optional[str] = "any") -> dict:
         # Read from local token file and append to request headers.
@@ -162,6 +224,19 @@ class ESI(object):
     def _check_key(self, key: str) -> None:
         if key not in self._metadata.paths:
             raise ValueError(f"{key} is not a valid request key.")
+
+    def _check_method(self, api_request: ESIRequest, method: str) -> None:
+        """Checks if method is supported by the ESIRequest.
+        Assume only one request_type (one of "get", "post", etc.) for api_request.
+        """
+        req_method = api_request.request_type
+        if req_method == method:
+            return
+        
+        if method == "head" and req_method == "get":
+            return
+            
+        raise ValueError(f"Request method {method} is not supported by {api_request.request_key} request.")
     
     def _parse_request_keywords(self, api_request: ESIRequest, keywords: dict):
         """Parses and checks user provided parameters.
