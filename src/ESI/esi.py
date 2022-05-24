@@ -1,6 +1,6 @@
 import asyncio
 import aiohttp
-from typing import Optional, Union
+from typing import Optional, Sequence, Union, List
 
 from .token import ESITokens
 from .metadata import ESIMetadata, ESIRequest
@@ -29,82 +29,138 @@ class ESI(object):
         ### Exit flag
         self._app_changed = False
 
-    def get(self, key: str, generate_token: Optional[bool] = False, **kwd) -> dict:
+    def get(self, key: str, generate_token: Optional[bool] = False, async_loop: Optional[List] = None, **kwd) -> Union[dict, List[dict]]:
         """Requests GET an ESI API.
 
-        Checks input parameters and send asynchronous GET request to ESI server.
-        The usage is similar to requests.get, supporting headers and params.
+        Simplifies coroutine execution and send asynchronous GET request to ESI server.
+        The usage is similar to requests.get, with simplified async speed up.
+        When async_loop argument is empty, this method is sending one request and waiting its result.
+        When async_loop is given, this method will loop through arguments in async_loop and run these tasks asynchronously,
+        effectively executing multiple requests in parallel.
         Parameters are enforced similar to the "Try it out" function on the ESI website.
         Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
         
         Args:
-            key: A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
+            key: str 
+                A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
-            generate_token: A bool telling get to generate new token (probably with different character) for the request.
-            kwd.params: A dictionary containing parameters for the request. 
+            generate_token: bool
+                A bool telling get to generate new token (probably with different character) for the request.
+            async_loop: List | None
+                A list of arguments that this method would loop through in order and execute asynchronously.
+                If async_loop is not given, this method would perform similar to a requests.get method.
+                If async_loop is given, this method requires corresponding kwd arguments exist and are iterable.
+            kwd.params: dict
+                A dictionary containing parameters for the request. 
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
-            kwd.headers: A dictionary containing headers for the request. Request Token is not necessary in this headers. 
+            kwd.headers: dict 
+                A dictionary containing headers for the request. Request Token is not necessary in this headers. 
                 If headers["Authorization"] field is provided, skips all Token operations.
                 EVE ESI does not require headers info, but supplying with User-Agent, etc., is recommended.
-            kwd.cname: A string of character name. Token with cname would be used for the request.
+            kwd.cname: str
+                A string of character name. Token with cname would be used for the request.
         
         Returns:
-            A dictionary containing json given by ESI.
-
-        Raises:
-            NotImplementedError: Request type POST/DELETE/PUT is not supported.
+            A dictionary or a list of dictionary, depends on async_loop argument.
 
         Example:
         >>> from src.ESI import ESIClient   # ESIClient is an instance instantiated upon import
-        >>> data = ESIClient.get("/markets/structures/{structure_id}/", structure_id=1035466617946)
+        >>> data = ESIClient.get("/markets/structures/{structure_id}/", structure_id=1035466617946)     # Single synchronous request
+        >>> # Asynchronously request 100 pages (1000 orders per page) of buy orders of The Forge (region of Jita)
+        >>> data = ESIClient.get("/markets/{region_id}/orders/", async_loop=["page"], region_id=1000002, page=range(1, 101), order_type="buy")    
         """
-        return self.request("get", key, generate_token, **kwd)
+        if not async_loop:
+            return self._event_loop.run_until_complete(self.request("get", key, generate_token, **kwd))
+        
+        # Not sure which is better
+        # creating coroutines, gathering them, then run_until_complete the coro with gather, or
+        # using ensure_future to create lots of futures, and run_until_complete all futures
+        tasks = []
+        def recursive_looper(async_loop: List, kwd: dict):
+            """A recursive helper that unfold a list into a nested loop.
+
+            Example:
+            >>> kwd["loop1"] = [0, 1, 2]
+            >>> kwd["loop2"] = ["a", "b", "c"]
+            >>> kwd["loop3"] = [111, 222, 333]
+            >>> async_loop = ["loop1", "loop2", "loop3"]
+            With this set up, this function is equivalent to
+            >>> for i in loop1:
+            >>>     for j in loop2:
+            >>>         for k in loop3:
+            >>>             do something
+            """
+            if not async_loop:
+                tasks.append(asyncio.ensure_future(self.request("get", key, generate_token, **kwd)))
+                return
+            async_loop_cpy = async_loop[:]
+            curr = async_loop_cpy.pop(0)
+            kwd_cpy = kwd.copy()
+            if curr not in kwd:
+                raise ValueError(f"Element \"{curr}\" in async_loop argument is not given as **kwd argument.")
+            for value in kwd[curr]:
+                kwd_cpy[curr] = value
+                recursive_looper(async_loop_cpy, kwd_cpy)
+        recursive_looper(async_loop, kwd)
+
+        self._event_loop.run_until_complete(asyncio.wait(tasks))
+        
+        ret = []
+        for task in tasks:
+            ret.extend(task.result())   # well, let's forget about memory
+
+        return ret
 
     def head(self, key: str, generate_token: Optional[bool] = False, **kwd) -> dict:
         """Request HEAD an ESI API.
 
-        Checks input parameters and send asynchronous HEAD request to ESI server.
-        The usage is similar to ESIClient.get method, with same parameters.
+        Checks input parameters and send a synchronous HEAD request to ESI server.
+        The usage is similar to ESIClient.get method, with same parameters and async_loop set to None.
         Parameters are enforced similar to the "Try it out" function on the ESI website.
         Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
         
         Args:
-            key: A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
+            key: str
+                A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
-            generate_token: A bool telling get to generate new token (probably with different character) for the request.
-            kwd.params: A dictionary containing parameters for the request. 
+            generate_token: bool
+                A bool telling get to generate new token (probably with different character) for the request.
+            kwd.params: dict
+                A dictionary containing parameters for the request. 
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
-            kwd.headers: A dictionary containing headers for the request. Request Token is not necessary in this headers. 
+            kwd.headers: dict
+                A dictionary containing headers for the request. Request Token is not necessary in this headers. 
                 If headers["Authorization"] field is provided, skips all Token operations.
                 EVE ESI does not require headers info, but supplying with User-Agent, etc., is recommended.
-            kwd.cname: A string of character name. Token with cname would be used for the request.
+            kwd.cname: str
+                A string of character name. Token with cname would be used for the request.
         
         Returns:
             A dictionary containing headers from ESI request.
-
-        Raises:
-            NotImplementedError: Request type POST/DELETE/PUT is not supported.
 
         Example:
         >>> from src.ESI import ESIClient       # ESIClient is an instance instantiated upon import
         >>> headers = ESIClient.head("/markets/structures/{structure_id}/", structure_id=sid, page=1)
         >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
         """
-        return self.request("head", key, generate_token, **kwd)
+        return self._event_loop.run_until_complete(self.request("head", key, generate_token, **kwd))
 
-    def request(self, method: str, key: str, generate_token: Optional[bool] = False, **kwd):
-        """Sends request to an ESI API.
+    async def request(self, method: str, key: str, generate_token: Optional[bool] = False, **kwd) -> dict:
+        """Sends one request to an ESI API.
 
-        Checks input parameters and send asynchronous request to ESI server.
-        The usage is similar to requests.request, supporting headers and params.
+        Checks input parameters and send one asynchronous request to ESI server.
         Request method is checked against the key to see if the API supports the given method.
         Parameters are enforced similar to the "Try it out" function on the ESI website.
         Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
         
         Args:
-            key: A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
+            method: str
+                A string for HTTP request method, e.g. "get", "head"
+            key: str
+                A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
-            generate_token: A bool telling get to generate new token (probably with different character) for the request.
+            generate_token: bool
+                A bool telling get to generate new token (probably with different character) for the request.
             kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
         
         Returns:
@@ -112,6 +168,9 @@ class ESI(object):
 
         Raises:
             NotImplementedError: Request type POST/DELETE/PUT is not supported.
+
+        See also:
+            ESI.get(): sends asynchronous request GET to an API.
         """
         self._check_key(key)
 
@@ -140,7 +199,7 @@ class ESI(object):
         # For my application (web request), aiohttp kind of like non-blocking accept in C, 
         # where I need to use epoll (or select) to interrupt the blocking accept and do something else (like servering a client).
         # Something cool and slightly difficult to understand: https://stackoverflow.com/questions/49005651/how-does-asyncio-actually-work
-        res = self._event_loop.run_until_complete(self.async_request(api_request, method))
+        res = await self.async_request(api_request, method)
         
         return res
 
