@@ -74,3 +74,51 @@ def search_structure_id(search: str, cname: str) -> int:
     if not ret:
         raise ValueError(f"No record of structure \"{search}\". Either {cname} does not have docking access, or the search is not precise.")
     return ret[0]
+
+def search_structure_system_id(search: str, cname: str) -> int:
+    """Searches for system_id given a structure info.
+
+    Finds which system (4-HWWF, etc.) the given player's structure (4-HWWF - WinterCo. Central Station, etc.) is located.
+    Requires esi-universe.read_structures.v1 scope (different from structure market).
+
+    Args:
+        search: str
+            The structure name to search for. It needs to be a precise name of the structure.
+            For example, for 4-H citadel, search should be "4-HWWF - WinterCo. Central Station".
+        cname: str
+            The character that has docking access to the structure.
+            Internally, a Token with cname (if generated before) will be used for the request.
+    
+    Returns:
+        A int of system_id.
+    """
+    sid = search_structure_id(search, cname)
+    resp = ESIClient.get("/universe/structures/{structure_id}/", structure_id=sid)
+    system_id = resp.get("solar_system_id")
+    return system_id
+
+def search_station_region_id(station_id: int) -> int:
+    """Searches for region_id given a station_id. 
+    A shortcut that combines two other calls.
+    """
+    system_id = search_station_system_id(station_id)
+    region_id = search_system_region_id(system_id)
+    return region_id
+
+def search_station_system_id(station_id: int) -> int:
+    """Searches for system_id given a station_id. 
+    Finds which system (4-HWWF, Jita, etc.) the given station is located.
+    """
+    # 404 if incorrect station_id
+    resp = ESIClient.get("/universe/stations/{station_id}/", station_id=station_id)
+    system_id = resp.get("system_id")
+    return int(system_id)
+
+def search_system_region_id(system_id: int) -> int:
+    """Searches for region_id given a system_id. 
+    Finds which region_id (Vale of the Silent, etc.) the given system (4-HWWF, etc.) is located.
+    """
+    resp = ESIClient.get("/universe/systems/{system_id}/", system_id=system_id)
+    constellation_id = resp.get("constellation_id")     # constellation info is not useful
+    region_id = ESIClient.get("/universe/constellations/{constellation_id}/", constellation_id=constellation_id).get("region_id")
+    return int(region_id)
