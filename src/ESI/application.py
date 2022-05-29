@@ -7,14 +7,16 @@ try:
     from config.definitions import APP_PATH
 except ImportError:
     # log
-    APP_PATH = os.path.realpath(os.path.join(os.path.dirname(__file__), "sso", "application.json"))
+    APP_PATH = os.path.realpath(
+        os.path.join(os.path.dirname(__file__), "sso", "application.json")
+    )
 
 
 @dataclass
 class Application:
     """Hold info for an Application.
 
-    clientId is the primary key for each Application. 
+    clientId is the primary key for each Application.
     Application has a save() function, which is useful for storing single Application.
     If multiple Application(s) need to be stored, append to ESIApplications and use its save().
 
@@ -34,7 +36,7 @@ class Application:
         >>> # 1. Navigate and log in to https://developers.eveonline.com/.
         >>> # 2. Click "Manage Applications" in the center.
         >>> # 3. Click "Create a new Application" or "View Application".
-        >>> # 4. After creating an application or viewing an application, 
+        >>> # 4. After creating an application or viewing an application,
         >>> #   copy the "Client ID", "Callback URL", and click "Copy Scopes to Clipboard".
         >>> #   Do not reveal "Secret Key" field.
         >>> clientId = {"Client ID" field copied}
@@ -44,6 +46,7 @@ class Application:
         >>> # Now you can save() or append to ESIApplications
         >>> app.save()  # save to local file immediately
     """
+
     clientId: str
     scope: str
     callbackURL: str = "https://localhost/callback/"
@@ -52,19 +55,19 @@ class Application:
         """Save current Application to local file.
 
         If local file already has an Application with the same clientId,
-        scope and callbackURL fields will be updated. 
+        scope and callbackURL fields will be updated.
 
         One read and one write per call. Recommend using ESIApplications.save()
         """
         if os.path.exists(APP_PATH) and os.stat(APP_PATH).st_size:
             with open(APP_PATH, "r") as all_apps_fp:
                 all_apps = json.load(all_apps_fp)
-        
+
             old_app = None
             for app_ in all_apps:
                 if app_["clientId"] == self.clientId:
                     old_app = app_
-        
+
             if old_app:
                 old_app["callbackURL"] = self.callbackURL
                 old_app["scope"] = self.scope
@@ -72,7 +75,7 @@ class Application:
                 all_apps.append(asdict(self))
         else:
             all_apps = [asdict(self)]
-        
+
         with open(APP_PATH, "w") as all_apps_fp:
             json.dump(all_apps, all_apps_fp)
 
@@ -83,6 +86,7 @@ class ESIApplications(object):
     Load load application.json file and parse into a list of Application.
     New Application can be appended like list append.
     """
+
     def __init__(self) -> None:
         self.apps = []
 
@@ -98,14 +102,16 @@ class ESIApplications(object):
             An Application with the given scope.
 
         Raises:
-            ValueError: No application with scope found. 
+            ValueError: No application with scope found.
         """
         for app_ in self.apps:
             scopes = app_.scope.split(" ")
             if scope in scopes:
                 return app_
 
-        raise ValueError(f"No Application with {scope} found. Create one and save using Application class.")
+        raise ValueError(
+            f"No Application with {scope} found. Create one and save using Application class."
+        )
 
     def append(self, app: Application) -> None:
         """Append an Application to the ESIApplications instance.
@@ -114,11 +120,11 @@ class ESIApplications(object):
             app: An Application. Fields are not checked when append.
         """
         self.apps.append(app)
-    
+
     def save(self) -> None:
         """Save all Application(s) to a local file.
 
-        Unpack all Application and store them to local application.json file. 
+        Unpack all Application and store them to local application.json file.
         Old file is truncated because the ESIApplications instance is initiated with all Application in the file.
         """
         if not self.apps:
@@ -131,9 +137,9 @@ class ESIApplications(object):
     def _load_apps(self) -> None:
         if not os.path.exists(APP_PATH) or not os.stat(APP_PATH).st_size:
             return
-        
+
         with open(APP_PATH, "r") as all_apps_fp:
             all_apps = json.load(all_apps_fp)
 
         for app_ in all_apps:
-            self.apps.append(Application(**app_))   # dict unpacking
+            self.apps.append(Application(**app_))  # dict unpacking

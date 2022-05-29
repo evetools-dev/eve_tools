@@ -10,14 +10,16 @@ class Param:
         name: A str for the name of the param. E.g. "character_id"
         _in: A str for the occurance of the param. One of ["path", "query", "header"]
         required: A bool for requirement.
-        dtype: A str for data type of the param. 
+        dtype: A str for data type of the param.
         default: Default value for the Param.
     """
-    name: str       # characther_id
-    _in: str        # "path" / "query" / "header" / "body"
+
+    name: str  # characther_id
+    _in: str  # "path" / "query" / "header" / "body"
     required: bool
-    dtype: type     # "string" / "integer" / "array" / "boolean" / "" (schema)
+    dtype: type  # "string" / "integer" / "array" / "boolean" / "" (schema)
     default: Optional[Any] = None
+
 
 @dataclass
 class ESIParams:
@@ -26,6 +28,7 @@ class ESIParams:
     Attributes:
         params: A list of Param instance.
     """
+
     # list of ESI pre-defined meta parameters, initialized at the start
     # Param.name: #/parameters/{actual_name}
     params: List[Param]
@@ -37,13 +40,13 @@ class ESIParams:
         self.params.append(param)
 
     def __getitem__(self, name: str) -> Param:
-        """Returns a reference of Param with name. 
+        """Returns a reference of Param with name.
         If no Param with name found, return None
         """
         for p in self.params:
             if p.name == name:
                 return p
-        
+
         return None
 
     def __iter__(self):

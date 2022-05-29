@@ -22,8 +22,7 @@ def check_type_id(type_id: int) -> bool:
 
 
 async def _check_type_id_async(type_id: int) -> bool:
-    """Coroutine version of check_type_id(). See check_type_id().
-    """
+    """Coroutine version of check_type_id(). See check_type_id()."""
     resp = await ESIClient.request("get", "/universe/types/{type_id}/", type_id=type_id)
     valid = resp.get("published")
     return valid
