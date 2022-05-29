@@ -1,21 +1,33 @@
-import time
 import pandas as pd
+import time
 from typing import Optional, Tuple
 
-from src.data import ESIDB, orders_columns
+from src.data import ESIDB
 
 
-def _update_or_not(threshold: int, **kwd) -> Tuple[bool, float]:
+def _update_or_not(threshold: int, table: str, max_column: str, **kwd) -> Tuple[bool, float]:
     """Determines whether to use db or retrieve from ESI.
 
     Checks rules to determines whether to retrieve market data from ESI or use cached data in esi.db.
-    Rules are predetermined to fit market data api. Default forcing update interval > 20 minutes.
+    Rules are predetermined to fit market data api.
     Set threshold=-1 to bypass all rule checking and force market api to retrieve from ESI.
+    Set max_value_check=False or fresh_entry_check=False to bypass specific rules.
 
     Args:
         threshold: int
-            The minimum interval between two consecutive updates. Unit is in seconds. Default 1200 seconds.
-            Forces update when threshold is below 0.
+            The threshold above which the update will not be enabled.
+            If max(max_columns) < threshold, this function will return True and enable request from ESI.
+        table: str
+            The table that will be checked.
+        max_column: str
+            The column that will be selected from using SELECT MAX(max_column).
+        kwd.max_value_check: bool
+            A flag that tells whether to check if max value of a column is greater than the given threshold.
+        kwd.fresh_entry_check: bool
+            A flag that tells whether to check fresh entry count. Default True.
+        kwd.min_fresh_entry: int
+            A int that specifies the minimum number of entries with max_column = max(max_column).
+            If fresh_entry_check=True, this argument is required.
         kwd:
             A list arguments that helps finding correct retrieve_time from db. 
             E.g. region_id=1000002, location_id=6000012.
@@ -25,26 +37,45 @@ def _update_or_not(threshold: int, **kwd) -> Tuple[bool, float]:
         tuple[1] is most recent retrieve_time of entries following arguments in kwd.
 
     Example:
-    >>> update_flag, retrieve_time = _update_or_not(1200, region_id=10000002)   # The Forge region, with 20 minutes interval
-    >>> update_flag, retrieve_time = _update_or_not(-1, location_id=6000012)    # Jita trade hub, force update
+    >>> # The Forge region, with 20 minutes interval, at least 1000 fresh entry with max(retrieve_time)
+    >>> update_flag, retrieve_time = _update_or_not(1200, "orders", "retrieve_time", min_fresh_entry=1000, region_id=10000002)   
+    >>> # The Forge region, with 20 minutes interval, do not check fresh entries
+    >>> update_flag, retrieve_time = _update_or_not(1200, "orders", "retrieve_time", fresh_entry_check=False, region_id=10000002) 
+    >>> # Force update  
+    >>> update_flag, retrieve_time = _update_or_not(-1, "orders", "retrieve_time") 
     This call finds all orders with kwd arguments and check the most recent retrieve_time entry.
     """
     if threshold < 0:
         return True, 0
     
-    curr_time = time.time()
-    where_clause = ' AND '.join([f"{k}={v}" for k, v in kwd.items()])     # region_id=12345, location_id=123 -> "region_id=12345 AND location_id=123"
-    retrieve_time: float = ESIDB.cursor.execute(f"SELECT MAX(retrieve_time) FROM orders WHERE {where_clause}").fetchone()[0]
-    if not retrieve_time:
-        retrieve_time = 0
+    fresh_entry_check = kwd.pop("fresh_entry_check", True)
+    max_value_check = kwd.pop("max_value_check", True)
+    fresh_entry_flag = False
+    max_value_flag = False
+    min_fresh_entry = kwd.pop("min_fresh_entry", 0)
 
-    # After running this functino with a given page, fresh_entry_cnt would be 1000, but the MAX(retrieve_time) will be updated.
+    if fresh_entry_check and not min_fresh_entry:
+        raise ValueError("Keyword argument \"min_fresh_entry\" is required when fresh_entry_check=True (which is by default).")
+
+    where_clause = ' AND '.join([f"{k}={v}" for k, v in kwd.items()])     # region_id=12345, location_id=123 -> "region_id=12345 AND location_id=123"
+    if kwd:     # if there's any left in kwd
+        select_max_value: float = ESIDB.cursor.execute(f"SELECT MAX({max_column}) FROM {table} WHERE {where_clause}").fetchone()[0]
+    else:
+        select_max_value: float = ESIDB.cursor.execute(f"SELECT MAX({max_column}) FROM {table}").fetchone()[0]
+    
+    # If select_max_value not null and below the threshold
+    max_value_flag = max_value_check and (not select_max_value or select_max_value < threshold)
+
+    # After running this function with a given page, fresh_entry_cnt would be 1000, but the MAX(retrieve_time) will be updated.
     # To avoid this, check there are sufficient entries (more than 1 page) in database.
-    fresh_entry_cnt = 0
-    if retrieve_time:
-        fresh_entry_cnt = ESIDB.cursor.execute(f"SELECT COUNT(*) FROM orders WHERE retrieve_time={retrieve_time} AND {where_clause}").fetchone()[0]
-    # Check update threshold and fresh_entry count
-    return (curr_time-retrieve_time > threshold or fresh_entry_cnt <= 1000), retrieve_time
+    if fresh_entry_check and select_max_value:
+        if kwd:
+            fresh_entry_cnt = ESIDB.cursor.execute(f"SELECT COUNT(*) FROM {table} WHERE {max_column}={select_max_value} AND {where_clause}").fetchone()[0]
+        else:
+            fresh_entry_cnt = ESIDB.cursor.execute(f"SELECT COUNT(*) FROM {table} WHERE {max_column}={select_max_value}").fetchone()[0]
+        fresh_entry_flag = fresh_entry_cnt < min_fresh_entry
+
+    return (max_value_flag or fresh_entry_flag), select_max_value
 
 
 def _select_from_orders(order_type: str = "all", type_id: Optional[int] = None, **kwd) -> pd.DataFrame:
@@ -81,6 +112,21 @@ def _select_from_orders(order_type: str = "all", type_id: Optional[int] = None, 
     else:
         rows = ESIDB.cursor.execute(f"SELECT * FROM orders WHERE is_buy_order!={is_buy_order_filter} AND {where_clause} \
                                     ORDER BY type_id, is_buy_order, price")
-    df = pd.DataFrame(rows)
-    df.columns = orders_columns
+    df = pd.DataFrame(rows, columns=ESIDB.columns["orders"])
     return df
+
+def reduce_volume(df: pd.DataFrame) -> pd.DataFrame:
+    """Reduce a market history DataFrame to volume data.
+    Calculates 30 days volume and 7 days volume and put them in a one-line DataFrame.
+    """
+    target = ["volume_seven_days", "volume_thirty_days"]
+    thirty_days = 31*24*3600    # 31 days because market history is delayed by one day
+    df = df[df.date < time.time() - thirty_days]
+    volume_seven_days = round(df.volume.sum() / 30, 2)
+
+    seven_days = 8*24*3600
+    df = df[df.date < time.time() - seven_days]
+    volume_thirty_days = round(df.volume.sum() / 7, 2)
+
+    row = [volume_seven_days, volume_thirty_days]
+    return pd.DataFrame([row],columns=target)

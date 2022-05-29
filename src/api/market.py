@@ -1,11 +1,14 @@
+import asyncio
 import pandas as pd
 import time
-from typing import Union, Optional
+from typing import Callable, List, Union, Optional
+from datetime import datetime
 
 from src.ESI import ESIClient
 from src.api import search_structure_id, search_id, search_station_region_id
-from src.data import ESIDB, orders_columns
+from src.data import ESIDB
 from .utils import _update_or_not, _select_from_orders
+from .check import _check_type_id_async
 
 
 def get_structure_market(structure_name_or_id: Union[str, int], cname: Optional[str] = None, **kwd) -> pd.DataFrame:
@@ -65,7 +68,7 @@ def get_structure_market(structure_name_or_id: Union[str, int], cname: Optional[
 
     # Using cache db or get from ESI
     update_threshold = kwd.get("update_threshold", 1200)
-    update_flag, retrieve_time = _update_or_not(update_threshold, location_id=sid)
+    update_flag, retrieve_time = _update_or_not(time.time()-update_threshold, "orders", "retrieve_time", min_fresh_entry=1000, location_id=sid)
     if not update_flag:
         df = _select_from_orders(location_id=sid, retrieve_time=retrieve_time)
         return df
@@ -89,7 +92,7 @@ def get_structure_market(structure_name_or_id: Union[str, int], cname: Optional[
     df["system_id"] = kwd.get("system_id", 0)   # default 0, use search_structure_system_id() to find system_id
 
     df.sort_values(["type_id", "is_buy_order", "price"], axis=0, ascending=[True, True, True], inplace=True)
-    df = df[orders_columns]     # reorder columns
+    df = df[ESIDB.columns["orders"]]     # reorder columns
 
     df.to_sql("orders", ESIDB.conn, if_exists="append", index=False, method=ESIDB.orders_insert_update)
     return df
@@ -146,9 +149,8 @@ def get_region_market(region_name_or_id: Union[str, int], order_type: str = "all
     update_threshold = kwd.get("update_threshold", 1200)
 
     # Using cache db or get from ESI
-    update_flag, retrieve_time = _update_or_not(update_threshold, region_id=rid)
+    update_flag, retrieve_time = _update_or_not(time.time()-update_threshold, "orders", "retrieve_time", min_fresh_entry=1000, region_id=rid)
     if not update_flag:
-        print("Using cache data")
         df = _select_from_orders(order_type, type_id, region_id=rid, retrieve_time=retrieve_time)
         return df
 
@@ -169,7 +171,7 @@ def get_region_market(region_name_or_id: Union[str, int], order_type: str = "all
     df["region_id"] = rid
 
     df.sort_values(["type_id", "is_buy_order", "price"], axis=0, ascending=[True, True, True], inplace=True)
-    df = df[orders_columns]     # reorder columns 
+    df = df[ESIDB.columns["orders"]]        # reorder columns 
 
     df.to_sql("orders", ESIDB.conn, if_exists="append", index=False, method=ESIDB.orders_insert_update)
     return df
@@ -217,7 +219,7 @@ def get_station_market(station_name_or_id: Union[str, int], order_type: str = "a
     region_id = search_station_region_id(station_id)
     
     update_threshold = kwd.get("update_threshold", 1200)
-    no_update_flag, retrieve_time = _update_or_not(update_threshold, region_id=region_id, location_id=station_id)
+    no_update_flag, retrieve_time = _update_or_not(time.time()-update_threshold, "orders", "retrieve_time", min_fresh_entry=1000, region_id=region_id, location_id=station_id)
     if not no_update_flag:
         get_region_market(region_id, order_type, type_id, update_threshold=update_threshold)
     
@@ -231,3 +233,158 @@ def get_jita_market(order_type: str = "all", type_id: Optional[int] = None) -> p
     A shortcut to the get_station_market() method. See get_station_market() for documentation.
     """
     return get_station_market("Jita IV - Moon 4 - Caldari Navy Assembly Plant", order_type, type_id)
+
+async def _get_type_history_async(rid: int, type_id: int, reduces: Optional[Callable] = None):
+    """Gets market history of a EVE type asynchronously.
+
+    Sends GET request to /markets/{region_id}/history/, which takes one region_id & one type_id
+    and returns a list of dictionary, each of which represents market history of a day.
+    The response raw text from each request is 60+KB with over one year of market history,
+    and usually a region has 1000+ (15000 for Jita) type_ids to request.
+    This makes response from ESI difficult to deal with, so a reduce function is provided to
+    reduce 60+KB data into one line of useful data, such as market volume.
+
+    Args:
+        rid: region_id
+        type_id: type_id of an EVE type. type_id is checked for validity to avoid 404 error from ESI.
+        reduces: A function to reduce size of response from 60KB (400+ lines) to one line of useful data.
+    
+    Returns:
+        A pd.DataFrame: usually 400+ lines if reduce function not provided, or other length depending on reduce func.
+        None: if the type_id is invalid (no market history), which is determined by the "published" field of the type.
+
+    Note:
+        The "date" field has been changed from "2022-05-28" to a epoch timestamp equivalent to 2022-05-28 11:05:00 GMT+0000
+        to facilitate easier comparison. Might be changed to the text format when better caching mechanism is added.
+    
+    Some facts:
+        1. ESI updates history api every 24 hours.
+        2. Each type_id has ~65KB data.
+        3. Null sec region (e.g. Vale of the Silent) has 1000+ type_id(s) on market -> ~90MB json.
+        4. Jita has 15000+ type_ids -> ~900MB json.
+        5. Each type_id needs one request, so 1000+ requests for Null sec and 15000+ requests for Jita.
+    """
+    update_flag, _ = _update_or_not(time.time()-2*24*3600, "market_history", "date", fresh_entry_check=False, region_id=rid, type_id=type_id)
+    # db is used to reduce ESI requests, but indexing a table with nearly one million rows is slow.
+    if not update_flag:     # using db
+        rows = ESIDB.cursor.execute(f"SELECT * FROM market_history WHERE region_id={rid} AND type_id={type_id}")
+        df = pd.DataFrame(rows, columns=ESIDB.columns["market_history"])
+        if reduces:
+            df = reduces(df)
+            df["type_id"] = type_id
+            df["region_id"] = rid
+        return df
+
+    if not await _check_type_id_async(type_id):
+        return
+
+    resp = await ESIClient.request("get", "/markets/{region_id}/history/", region_id=rid, type_id=type_id)
+    if len(resp) == 0:
+        return
+
+    df = pd.DataFrame(resp)
+    df["type_id"] = type_id
+    df["region_id"] = rid
+    # ESI updates history on 11:05:00 GMT, 39900 for 11:05 in timestamp, UTC is the same as GMT
+    df["date"] = df["date"].apply(lambda date: datetime.timestamp(datetime.strptime(f"{date} +0000", "%Y-%m-%d %z")) + 39900)
+    df = df[ESIDB.columns["market_history"]]
+
+    df.to_sql("market_history", ESIDB.conn, if_exists="append", index=False, method=ESIDB.history_insert_ignore)
+
+    if reduces:
+        df = reduces(df)
+        df["type_id"] = type_id
+        df["region_id"] = rid
+    return df
+
+def get_type_history(region_name_or_id: Union[str, int], type_id: int, reduces: Optional[Callable] = None) -> pd.DataFrame:
+    """Gets market history of one EVE type.
+
+    Wraps the _get_type_history_async coroutine to simplifies asyncio related operation.
+    See _get_type_history_async() for documentation.
+    """
+    if isinstance(region_name_or_id, str):
+        rid = search_id(region_name_or_id, "region")
+    elif isinstance(region_name_or_id, int):
+        rid = region_name_or_id
+    else:
+        raise TypeError(f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}.")
+    
+    loop = asyncio.get_event_loop()
+    df = loop.run_until_complete(_get_type_history_async(rid, type_id, reduces))
+    return df
+
+def get_market_history(region_name_or_id: Union[str, int], type_ids: List[int] = None, reduces: Optional[Callable] = None) -> pd.DataFrame:
+    """Gets all market history of a region.
+
+    Uses _get_type_history_async() to retrieve market history of multiple types.
+    This call takes about 5 minutes with The Forge region (15000+ requests).
+    It is recommended to pass in specific type_ids to shorten request time.
+    Results of each type is concatenated using pd.concat.
+
+    Args:
+        region_name_or_id: A int for region id or a string for the region name.
+        type_ids: A list of type_id(s). If not given, retrieve history of all market types in region.
+        reduces: A function to reduce size of response from 60KB (400+ lines) to one line of useful data.
+            A default function is provided to retrieve market volume of a type.
+    
+    Returns:
+        A pd.DataFrame. Each line represents market data of a type_id.
+
+    Note:
+        This function is not cached. Multiple calls on this function will have the same performance.
+
+    See also:
+        reduce_volume(): Reduce a market history DataFrame to volume data.
+        _get_type_history_async(): Gets market history of a market type asynchronously. 
+    """
+    if isinstance(region_name_or_id, str):
+        rid = search_id(region_name_or_id, "region")
+    elif isinstance(region_name_or_id, int):
+        rid = region_name_or_id
+    else:
+        raise TypeError(f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}.")
+
+    if not type_ids:
+        type_ids = get_region_types(rid)
+    tasks = [asyncio.ensure_future(_get_type_history_async(rid, type_id, reduces)) for type_id in type_ids]
+    loop = asyncio.get_event_loop()
+    ret = loop.run_until_complete(asyncio.gather(*tasks))
+
+    return pd.concat(ret, ignore_index=True)
+
+def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> List[int]:
+    """Gets type_ids that have active orders in the region.
+
+    Requests a list of type_ids from /markets/{region_id}/types/, with a given region_id.
+    It is worth mentioning that although ESI says this endpoint "returns a list of type IDs that have active orders in the region",
+    type_ids returned are not all accurate. Some type_id might be unpublished (event items, items for testing, etc.),
+    which will cause 404 error when requesting endpoint with type_id field.
+    So it is worth using check_type_id() or _check_type_id_async() to check if the type_id is valid.
+
+    Args:
+        region_name_or_id: A str for the region name or an int for the region id.
+        src: one of ["esi", "db"]. 
+            If set to "esi", requests type_ids from /markets/{region_id}/types/, which contains invalid type_ids.
+            If set to "db", selects type_ids from orders table in db, which should all be valid type_ids.
+    
+    Returns:
+        A list of integers for type_ids. Result is not sorted and the order has no actual meaning.
+    """
+    if isinstance(region_name_or_id, str):
+        rid = search_id(region_name_or_id, "region")
+    elif isinstance(region_name_or_id, int):
+        rid = region_name_or_id
+    else:
+        raise TypeError(f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}.")
+
+    if src == "esi":
+        headers = ESIClient.head("/markets/{region_id}/types/", region_id=rid)
+        x_pages = int(headers["X-Pages"])
+        pages = range(1, x_pages+1)
+
+        resp = ESIClient.get("/markets/{region_id}/types/", async_loop=["page"], region_id=rid, page=pages)
+    elif src == "db":
+        resp = ESIDB.cursor.execute(f"SELECT DISTINCT(type_id) FROM orders WHERE region_id={rid}")
+        resp = list(map(lambda x: x[0], resp.fetchall()))
+    return resp
