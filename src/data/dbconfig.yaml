@@ -1,0 +1,41 @@
+esi:
+  tables: [orders, market_history]
+  orders:
+    schema:
+      # Foreign key constaint on type_id, region_id, and other *_id(s) should be added.
+      # But it is only useful after seperate tables for types, regions, etc. are created.
+      # It also requires some initialization on DB that needs to call ESIClient.
+      order_id INTEGER PRIMARY KEY,
+      type_id INTEGER NOT NULL,
+      is_buy_order INTEGER,
+      price REAL NOT NULL,
+      duration INTEGER,
+      volume_remain INTEGER,
+      volume_total INTEGER,
+      min_volume INTEGER, 
+      range TEXT,
+      location_id INTEGER,
+      system_id INTEGER,
+      region_id INTEGER,
+      issued TEXT,
+      retrieve_time REAL DEFAULT 0
+
+  market_history:
+    schema:
+      type_id INTEGER,
+      region_id INTEGER,
+      date REAL,
+      average REAL,
+      highest REAL,
+      lowest REAL,
+      order_count INTEGER,
+      volume INTEGER DEFAULT 0,
+      PRIMARY KEY(type_id, region_id, date)
+
+cache:
+  tables: [api_cache]
+  api_cache:
+    schema:
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      expires TIMESTAMP NOT NULL

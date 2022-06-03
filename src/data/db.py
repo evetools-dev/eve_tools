@@ -2,6 +2,8 @@ import os
 import sqlite3
 from typing import List
 
+import yaml
+
 orders_columns = [
     "order_id",
     "type_id",
@@ -37,49 +39,15 @@ class ESIDBManager:
     ESIDB is also useful to store time sensitive data, such as market data, which could be used for analysis.
     """
 
-    def __init__(self):
-        self.conn = sqlite3.connect(
-            os.path.realpath(os.path.join(os.path.dirname(__file__), "esi.db"))
-        )
+    DBDIR = os.path.realpath(os.path.dirname(__file__))
+
+    def __init__(self, db_name):
+        self.db_name = db_name
+        self.conn = sqlite3.connect(os.path.join(self.DBDIR, db_name + ".db"))
         self.cursor = self.conn.cursor()
 
-        self.cursor.execute(
-            """CREATE TABLE IF NOT EXISTS orders (
-                            order_id INTEGER PRIMARY KEY,
-                            type_id INTEGER NOT NULL,
-                            is_buy_order INTEGER,
-                            price REAL NOT NULL,
-                            duration INTEGER,
-                            volume_remain INTEGER,
-                            volume_total INTEGER,
-                            min_volume INTEGER, 
-                            range TEXT,
-                            location_id INTEGER,
-                            system_id INTEGER,
-                            region_id INTEGER,
-                            issued TEXT,
-                            retrieve_time REAL DEFAULT 0
-                            );"""
-        )
-
-        # Foreign key constaint on type_id, region_id, and other *_id(s) should be added.
-        # But it is only useful after seperate tables for types, regions, etc. are created.
-        # It also requires some initialization on DB that needs to call ESIClient.
-        self.cursor.execute(
-            """CREATE TABLE IF NOT EXISTS market_history (
-                            type_id INTEGER,
-                            region_id INTEGER,
-                            date REAL,
-                            average REAL,
-                            highest REAL,
-                            lowest REAL,
-                            order_count INTEGER,
-                            volume INTEGER DEFAULT 0,
-                            PRIMARY KEY(type_id, region_id, date)
-                            );"""
-        )
-
-        self.columns = self._init_columns()
+        self.__init_tables()
+        self.__init_columns()
 
     def __del__(self):
         self.cursor.close()
@@ -124,14 +92,20 @@ class ESIDBManager:
         )
         conn.executemany(d, data_iter)
 
-    def _init_columns(self):
+    def __init_columns(self):
         ret = {}
-        for table in self._table_names():
+        for table in self.tables:
             cur = self.conn.execute(f"SELECT * FROM {table}")
             names = list(map(lambda x: x[0], cur.description))
             ret[table] = names
-        return ret
+        self.columns = ret
 
-    def _table_names(self) -> List[str]:
-        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        return list(map(lambda x: x[0], self.cursor.fetchall()))
+    def __init_tables(self):
+        with open(os.path.join(self.DBDIR, "dbconfig.yaml")) as f:
+            dbconfig = yaml.full_load(f)
+        self._dbconfig = dbconfig.get(self.db_name)
+        self.tables = self._dbconfig.get("tables")
+        for table in self.tables:
+            table_config = self._dbconfig.get(table)
+            schema = table_config.get("schema")
+            self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {table} ({schema});")
