@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import aiohttp
-from typing import Optional, Sequence, Union, List
+from typing import Optional, Union, List
 
 from .token import ESITokens
 from .metadata import ESIMetadata, ESIRequest
@@ -37,7 +37,7 @@ class ESI(object):
     def get(
         self,
         key: str,
-        generate_token: Optional[bool] = False,
+        generate_token: Optional[bool] = True,
         async_loop: Optional[List] = None,
         **kwd,
     ) -> Union[dict, List[dict]]:
@@ -56,7 +56,8 @@ class ESI(object):
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
             generate_token: bool
-                A bool telling get to generate new token (probably with different character) for the request.
+                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
+                Default generating tokens.
             async_loop: List | None
                 A list of arguments that this method would loop through in order and execute asynchronously.
                 If async_loop is not given, this method would perform similar to a requests.get method.
@@ -132,7 +133,7 @@ class ESI(object):
 
         return ret
 
-    def head(self, key: str, generate_token: Optional[bool] = False, **kwd) -> dict:
+    def head(self, key: str, generate_token: Optional[bool] = True, **kwd) -> dict:
         """Request HEAD an ESI API.
 
         Checks input parameters and send a synchronous HEAD request to ESI server.
@@ -145,7 +146,8 @@ class ESI(object):
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
             generate_token: bool
-                A bool telling get to generate new token (probably with different character) for the request.
+                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
+                Default generating tokens.
             kwd.params: dict
                 A dictionary containing parameters for the request.
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
@@ -169,7 +171,7 @@ class ESI(object):
         )
 
     async def request(
-        self, method: str, key: str, generate_token: Optional[bool] = False, **kwd
+        self, method: str, key: str, generate_token: Optional[bool], **kwd
     ) -> dict:
         """Sends one request to an ESI API.
 
@@ -185,7 +187,8 @@ class ESI(object):
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
             generate_token: bool
-                A bool telling get to generate new token (probably with different character) for the request.
+                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
+                Default generating tokens if not exists.
             kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
 
         Returns:
@@ -211,14 +214,15 @@ class ESI(object):
         api_request.params.update(params)
 
         headers = kwd.get("headers", {})
-        if api_request.security and not headers.get(
-            "Authorization"
-        ):  # if has security and has no Authorization field, get auth token.
+        # if has security and has no Authorization field, get auth token.
+        if api_request.security and not headers.get("Authorization"):
             app = self.apps.search_scope(" ".join(api_request.security))
             with ESITokens(app) as tokens:
-                if generate_token:
+                cname = kwd.pop("cname", "any")
+                if generate_token and not tokens.exist(cname):
+                    logger.debug("Generate token for request: %s %s", method, key)
                     tokens.generate()
-                headers.update(self._get_auth_headers(tokens, kwd.pop("cname", "any")))
+                headers.update(self._get_auth_headers(tokens, cname))
 
         api_request.headers.update(headers)
 
@@ -293,7 +297,7 @@ class ESI(object):
         """
         if not self._async_session:
             self._async_session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(verify_ssl=False), raise_for_status=True
+                connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
             )  # default maximum 100 connections
 
         # no encoding: "4-HWF" stays what it is
