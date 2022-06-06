@@ -6,8 +6,8 @@ from datetime import datetime
 
 from src.ESI import ESIClient
 from src.api import search_structure_id, search_id, search_station_region_id
-from src.data import ESIDB
-from .utils import _update_or_not, _select_from_orders
+from src.data import ESIDB, api_cache
+from .utils import _update_or_not, _select_from_orders, make_cache_key
 from .check import _check_type_id_async
 
 
@@ -65,17 +65,31 @@ def get_structure_market(
             f"Argument structure_name_or_id should be str or int, not {type(structure_name_or_id)}."
         )
 
-    if (
-        not sid and not cname
-    ):  # if s_id not given, cname is required for search_structure_id api
+    if not sid and not cname:
+        # if s_id not given, cname is required for search_structure_id api
         raise ValueError(
             f'Require parameter "cname" for authentication when structure name is given instead of structure id.'
         )
     else:
         sid = search_structure_id(structure_name_or_id, cname)
 
+    headers = ESIClient.head(
+        "/markets/structures/{structure_id}/", structure_id=sid, page=1
+    )
+
+    key = make_cache_key(get_structure_market, sid, **kwd)  # cname is not hashed
+    value = api_cache.get(key)
+    if value is not None:
+        return value
+
+    update_threshold = kwd.get("update_threshold")
+    if update_threshold:
+        expires = update_threshold
+    else:
+        expires = headers.get("Expires")
+        update_threshold = 1200
+
     # Using cache db or get from ESI
-    update_threshold = kwd.get("update_threshold", 1200)
     update_flag, retrieve_time = _update_or_not(
         time.time() - update_threshold,
         "orders",
@@ -90,12 +104,8 @@ def get_structure_market(
     # Getting from ESI
     page = kwd.get("page", -1)
     if page == -1:
-        headers = ESIClient.head(
-            "/markets/structures/{structure_id}/", structure_id=sid, page=1
-        )
-        x_pages = int(
-            headers["X-Pages"]
-        )  # get X-Pages headers, which tells how many pages of data
+        # get X-Pages headers, which tells how many pages of data
+        x_pages = int(headers["X-Pages"])
         pages = range(1, x_pages + 1)
     else:
         pages = [page]
@@ -131,6 +141,8 @@ def get_structure_market(
         index=False,
         method=ESIDB.orders_insert_update,
     )
+
+    api_cache.set(key, df, expires)
     return df
 
 
@@ -192,7 +204,27 @@ def get_region_market(
         )
 
     page = kwd.get("page", -1)
-    update_threshold = kwd.get("update_threshold", 1200)
+    update_threshold = kwd.get("update_threshold")
+
+    headers = ESIClient.head(
+        "/markets/{region_id}/orders/",
+        region_id=rid,
+        order_type=order_type,
+        type_id=type_id,
+        page=1,
+    )
+
+    # Attempt to read from cache
+    key = make_cache_key(get_region_market, rid, order_type, type_id, **kwd)
+    value = api_cache.get(key)
+    if value is not None:
+        return value
+
+    if update_threshold:
+        expires = update_threshold
+    else:
+        expires = headers.get("Expires")
+        update_threshold = 1200
 
     # Using cache db or get from ESI
     update_flag, retrieve_time = _update_or_not(
@@ -210,13 +242,6 @@ def get_region_market(
 
     # Getting from ESI
     if page == -1:
-        headers = ESIClient.head(
-            "/markets/{region_id}/orders/",
-            region_id=rid,
-            order_type=order_type,
-            type_id=type_id,
-            page=1,
-        )
         x_pages = int(
             headers["X-Pages"]
         )  # get X-Pages headers, which tells how many pages of data
@@ -254,6 +279,8 @@ def get_region_market(
         index=False,
         method=ESIDB.orders_insert_update,
     )
+
+    api_cache.set(key, df, expires)
     return df
 
 
@@ -450,8 +477,19 @@ def get_type_history(
             f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}."
         )
 
+    key = make_cache_key(get_type_history, rid, type_id, reduces)
+    value = api_cache.get(key)
+    if value is not None:
+        return value
+    headers = ESIClient.head(
+        "/markets/{region_id}/history/", region_id=rid, type_id=type_id
+    )
+    expires = headers.get("Expires")
+
     loop = asyncio.get_event_loop()
     df = loop.run_until_complete(_get_type_history_async(rid, type_id, reduces))
+
+    api_cache.set(key, df, expires)
     return df
 
 
@@ -471,6 +509,7 @@ def get_market_history(
         region_name_or_id: A int for region id or a string for the region name.
         type_ids: A list of type_id(s). If not given, retrieve history of all market types in region.
         reduces: A function to reduce size of response from 60KB (400+ lines) to one line of useful data.
+            Function should have signature reduce_func(df: pd.DataFrame) -> pd.DataFrame.
             A default function is provided to retrieve market volume of a type.
 
     Returns:
@@ -494,14 +533,29 @@ def get_market_history(
 
     if not type_ids:
         type_ids = get_region_types(rid)
+        # To prevent updating market history every time region_types changes.
+        key = make_cache_key(get_market_history, rid, "all_type_ids", reduces)
+    else:
+        key = make_cache_key(get_market_history, rid, type_ids, reduces)
+
+    value = api_cache.get(key)
+    if value is not None:
+        return value
+    headers = ESIClient.head(
+        "/markets/{region_id}/history/", region_id=rid, type_id=12005
+    )
+    expires = headers.get("Expires")
+
     tasks = [
         asyncio.ensure_future(_get_type_history_async(rid, type_id, reduces))
         for type_id in type_ids
     ]
     loop = asyncio.get_event_loop()
     ret = loop.run_until_complete(asyncio.gather(*tasks))
+    df = pd.concat(ret, ignore_index=True)
 
-    return pd.concat(ret, ignore_index=True)
+    api_cache.set(key, df, expires)
+    return df
 
 
 def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> List[int]:
@@ -531,8 +585,15 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
             f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}."
         )
 
+    key = make_cache_key(get_region_types, rid, src)
+    value = api_cache.get(key)
+    if value:
+        return value
+
+    headers = ESIClient.head("/markets/{region_id}/types/", region_id=rid)
+    expires = headers.get("Expires")
+
     if src == "esi":
-        headers = ESIClient.head("/markets/{region_id}/types/", region_id=rid)
         x_pages = int(headers["X-Pages"])
         pages = range(1, x_pages + 1)
 
@@ -547,4 +608,6 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
             f"SELECT DISTINCT(type_id) FROM orders WHERE region_id={rid}"
         )
         resp = list(map(lambda x: x[0], resp.fetchall()))
+
+    api_cache.set(key, resp, expires)
     return resp

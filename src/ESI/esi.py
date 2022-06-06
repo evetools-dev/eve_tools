@@ -171,7 +171,7 @@ class ESI(object):
         )
 
     async def request(
-        self, method: str, key: str, generate_token: Optional[bool], **kwd
+        self, method: str, key: str, generate_token: Optional[bool] = True, **kwd
     ) -> dict:
         """Sends one request to an ESI API.
 
