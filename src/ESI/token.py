@@ -72,9 +72,8 @@ class ESITokens(object):
 
         self.tokens = []  # list of tokens for the App
 
-        self._update_time = kwd.get(
-            "update_time", 1198
-        )  # ESI token lifespane is 1199 seconds, 1198 for safety
+        # ESI token lifespane is 1199 seconds, 1198 for safety
+        self._update_time = kwd.get("update_time", 1198)
 
         self._save_flag = False  # Need to save() or not. Every method that changes self.tokens set this to True.
 
@@ -195,13 +194,13 @@ class ESITokens(object):
         Returns:
             A bool showing if Token exists or not.
         """
-        if cname:
+        if cname == "any" or not cname:
+            return bool(self.tokens)
+        else:
             for token_ in self.tokens:
                 if token_.character_name == cname:
                     return True
-            return False
-        else:
-            return bool(self.tokens)
+        return False
 
     def remove(self, cname: str) -> Token:
         """Removes a Token with given character name.
@@ -269,7 +268,11 @@ class ESITokens(object):
             if token_.character_name == cname:
                 self.refresh(token_.character_name)
                 return token_
-        raise ValueError(f"No Token matches character_name = {cname}.")
+
+        if cname == "any":
+            raise ValueError(f"No Token found.")
+        else:
+            raise ValueError(f"No Token matches character_name = {cname}.")
 
     def __str__(self) -> str:
         return "Tokens(app={app}, tokens={tokens})".format(
