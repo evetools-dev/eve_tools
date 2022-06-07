@@ -1,21 +1,15 @@
 """Validates a given JWT token originating from the EVE SSO.
 
-Prerequisites:
-    * Have a Python 3 environment available to you (possibly by using a
-      virtual environment: https://virtualenv.pypa.io/en/stable/)
-    * Run pip install -r requirements.txt with this directory as your root.
-
-This can be run by doing
-
->>> python validate_jwt.py
-
-and passing in a JWT token that you have retrieved from the EVE SSO.
+Source: https://github.com/esi/esi-docs/blob/master/examples/python/sso/validate_jwt.py
 """
+import logging
 import sys
 
 import requests
 from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError
+
+logger = logging.getLogger(__name__)
 
 
 def validate_eve_jwt(jwt_token) -> dict:
@@ -38,9 +32,10 @@ def validate_eve_jwt(jwt_token) -> dict:
     try:
         jwk_sets = data["keys"]
     except KeyError as e:
-        print("Something went wrong when retrieving the JWK set. The returned "
-              "payload did not have the expected key {}. \nPayload returned "
-              "from the SSO looks like: {}".format(e, data))
+        logger.warning(
+            "The returned JTW payload did not have the expected key {}. "
+            "Payload returned from the SSO looks like: {}".format(e, data)
+        )
         sys.exit(1)
 
     jwk_set = next((item for item in jwk_sets if item["alg"] == "RS256"))
@@ -51,11 +46,11 @@ def validate_eve_jwt(jwt_token) -> dict:
             jwk_set,
             algorithms=jwk_set["alg"],
             issuer="login.eveonline.com",
-            audience="EVE Online",      # newly added required field
+            audience="EVE Online",  # newly added required field
         )
     except ExpiredSignatureError:
-        print("The JWT token has expired")
+        logger.warning("The JWT token has expired")
         sys.exit(1)
     except JWTError as e:
-        print(f"The JWT signature was invalid: {e}")
+        logger.warning(f"The JWT signature was invalid: {e}")
         sys.exit(1)
