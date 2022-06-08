@@ -2,7 +2,6 @@
 *.json
 !application.json
 *.log
-test*
 *.db
 main.py
 __pycache__
