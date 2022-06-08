@@ -1,5 +1,6 @@
 *.csv
 *.json
+!application.json
 *.log
 test*
 *.db
