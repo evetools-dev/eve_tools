@@ -149,11 +149,11 @@ def reduce_volume(df: pd.DataFrame) -> pd.DataFrame:
     """
     target = ["volume_seven_days", "volume_thirty_days"]
     thirty_days = 31 * 24 * 3600  # 31 days because market history is delayed by one day
-    df = df[df.date < time.time() - thirty_days]
+    df = df[df.date > time.time() - thirty_days]
     volume_seven_days = round(df.volume.sum() / 30, 2)
 
     seven_days = 8 * 24 * 3600
-    df = df[df.date < time.time() - seven_days]
+    df = df[df.date > time.time() - seven_days]
     volume_thirty_days = round(df.volume.sum() / 7, 2)
 
     row = [volume_seven_days, volume_thirty_days]
