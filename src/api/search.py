@@ -126,6 +126,17 @@ def search_structure_system_id(search: str, cname: str) -> int:
     system_id = resp.get("solar_system_id")
     return system_id
 
+def search_structure_region_id(search: str, cname: str) -> int:
+    """Searches for region_id given a structure name.
+    Translates from "4-HWWF - WinterCo. Central Station" to the region id of Vale of the Silent.
+
+    Args:
+        search: A precise str for a player's structure.
+        cname: A character that has docking access to the structure.
+    """
+    system_id = search_structure_system_id(search, cname)
+    region_id = search_system_region_id(system_id)
+    return region_id
 
 def search_station_region_id(station_id: int) -> int:
     """Searches for region_id given a station_id.

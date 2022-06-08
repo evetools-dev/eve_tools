@@ -605,9 +605,59 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
         )
     elif src == "db":
         resp = ESIDB.cursor.execute(
-            f"SELECT DISTINCT(type_id) FROM orders WHERE region_id={rid}"
+            f"SELECT DISTINCT type_id FROM orders WHERE region_id={rid}"
         )
         resp = list(map(lambda x: x[0], resp.fetchall()))
 
     api_cache.set(key, resp, expires)
     return resp
+
+def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> List[int]:
+    """Gets type_ids with active orders in a structure.
+
+    Searches market orders in esi.db database, which includes current and possibly some historic orders.
+    If esi.db does not have any orders recorded, uses get_structure_market to obtain current orders.
+
+    Args:
+        structure_name_or_id: str | int
+            A string or an integer for the structure.
+            If a string is given, it should be the precise name of the structure.
+            If an integer is given, it should be a valid structure_id.
+        cname: str | None
+            A string for the character name, used by the search_structure_id to search for structure_id of a given structure name.
+            This character should have docking (and market) access to the structure. See search_structure_id().
+            If a structure name is given, cname is required. If a structure id is given, cname is optional.
+
+    Returns:
+        A list of integers for type_ids. Result is not sorted and the order has no actual meaning.
+    """
+    sid = True
+    if isinstance(structure_name_or_id, str):
+        sid = False
+    elif isinstance(structure_name_or_id, int):
+        sid = structure_name_or_id
+    else:
+        raise TypeError(
+            f"Argument structure_name_or_id should be str or int, not {type(structure_name_or_id)}."
+        )
+
+    if not sid and not cname:
+        # if s_id not given, cname is required for search_structure_id api
+        raise ValueError(
+            f'Require parameter "cname" for authentication when structure name is given instead of structure id.'
+        )
+    else:
+        sid = search_structure_id(structure_name_or_id, cname)
+
+    key = make_cache_key(get_structure_types, sid)  # cname is not important in structure related caching
+    value = api_cache.get(key)
+    if value:
+        return value
+    
+    resp = ESIDB.cursor.execute(f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}").fetchall()
+    if not resp:    # esi.db does not have records of structure market orders
+        get_structure_market(sid, cname)
+        resp = ESIDB.cursor.execute(f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}").fetchall()
+    ret = list(map(lambda x: x[0], resp))
+    api_cache.set(key, ret, 24*3600)    # cached for 1 day
+    return ret
