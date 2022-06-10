@@ -59,7 +59,7 @@ def hauling(
 
     # type_id -> name
     invTypesPATH = os.path.join(
-        os.path.dirname(__file__), "src", "data", "invTypes.csv"
+        os.path.dirname(__file__), "src", "data", "static", "invTypes.csv.bz2"
     )
     invTypes = pd.read_csv(
         invTypesPATH, index_col="Unnamed: 0"
