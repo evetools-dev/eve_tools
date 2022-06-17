@@ -4,13 +4,7 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Optional
 
-try:
-    from config.definitions import TOKEN_PATH
-except ImportError:
-    # log
-    TOKEN_PATH = os.path.realpath(
-        os.path.join(os.path.dirname(__file__), "sso", "token.json")
-    )
+from src.config import TOKEN_PATH
 
 from .application import Application
 from .sso.refresh_token import refresh_token

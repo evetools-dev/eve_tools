@@ -4,13 +4,7 @@ import json
 from typing import Any, List, Optional
 from dataclasses import dataclass, field
 
-try:
-    from config.definitions import METADATA_PATH
-except ImportError:
-    # log
-    METADATA_PATH = os.path.realpath(
-        os.path.join(os.path.dirname(__file__), "metadata.json")
-    )
+from src.config import METADATA_PATH
 
 from .param import ESIParams, Param
 
