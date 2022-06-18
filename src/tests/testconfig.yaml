@@ -1,0 +1,3 @@
+test_config:
+  cname: Hanbie Serine  # a character with docking access to ${global_config.structure_name}
+  structure_name: "4-HWWF - WinterCo. Central Station"

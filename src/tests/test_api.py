@@ -4,12 +4,21 @@ import time
 import unittest
 
 from src import api_cache
-from src.api.market import get_market_history, get_region_market, get_region_types, get_type_history
+from src.api.market import (
+    get_market_history,
+    get_region_market,
+    get_region_types,
+    get_station_market,
+    get_structure_market,
+    get_structure_types,
+    get_type_history,
+)
 from src.api.utils import make_cache_key, reduce_volume
 from src.data.cache import hash_key
+from .utils import TestInit
 
 
-class TestMarket(unittest.TestCase):
+class TestMarket(unittest.TestCase, TestInit):
     @staticmethod
     def request_from_ESI(esi_api: Callable, *args, **kwd):
         resp = esi_api(*args, **kwd)
@@ -19,6 +28,28 @@ class TestMarket(unittest.TestCase):
             api_cache.evit(key)
             resp = esi_api(*args, **kwd)  # retrieve from ESI
         return resp
+
+    def test_get_structure_types(self):
+        resp = self.request_from_ESI(
+            get_structure_types, self.structure_name, self.cname
+        )
+        resp_cache = get_structure_types(self.structure_name, self.cname)
+
+        # Test: api returns correct value
+        self.assertGreater(len(resp), 2)  # resp contains some type_id(s)
+        self.assertNotIn(1, resp)
+        if len(resp) > 1000:  # structure has a big market
+            self.assertIn(1405, resp)  # 1405: inertial stabilizer
+
+        # Test: if sid given, cname is optional
+        resp_sid = self.request_from_ESI(
+            get_structure_types, self.sid, "some weird cname"
+        )
+        self.assertEqual(set(resp), set(resp_sid))
+
+        # Test: cache returns correctly
+        self.assertEqual(len(resp), len(resp_cache))
+        self.assertEqual(set(resp), set(resp_cache))
 
     def test_get_region_types_esi(self):
         resp = self.request_from_ESI(get_region_types, 10000002, "esi")
@@ -123,5 +154,101 @@ class TestMarket(unittest.TestCase):
         self.assertIn(979, resp["type_id"].values)
         self.assertTrue(resp.equals(resp_cache))
 
-    def test_get_station_market(self):
-        return
+    def test_get_station_market_one_type(self):
+        station_name = "Jita IV - Moon 4 - Caldari Navy Assembly Plant"
+        resp: pd.DataFrame = self.request_from_ESI(
+            get_station_market, station_name, order_type="all", type_id=12005
+        )
+        resp_cache = get_station_market(station_name, order_type="all", type_id=12005)
+
+        # Test: api returns correct value
+        self.assertGreater(len(resp), 2)
+        self.assertTrue((resp["type_id"] == 12005).all())
+
+        # Test: buy/sell flag correct
+        resp_sell: pd.DataFrame = self.request_from_ESI(
+            get_station_market, station_name, order_type="sell", type_id=12005
+        )
+        resp_buy: pd.DataFrame = self.request_from_ESI(
+            get_station_market, station_name, order_type="buy", type_id=12005
+        )
+        self.assertGreater(len(resp), len(resp_sell))
+        self.assertGreater(len(resp), len(resp_buy))
+        self.assertTrue((resp_sell["is_buy_order"] == 0).all())
+        self.assertTrue((resp_buy["is_buy_order"] == 1).all())
+        self.assertEqual(
+            len(resp_sell.merge(resp).drop_duplicates()),
+            len(resp_sell.drop_duplicates()),
+        )  # sell/buy is a subset of "all" orders
+        self.assertEqual(
+            len(resp_buy.merge(resp).drop_duplicates()), len(resp_buy.drop_duplicates())
+        )
+
+        # Test: cache return matches ESI return
+        self.assertTrue(resp.equals(resp_cache))
+        self.assertEqual(set(resp.columns), set(resp_cache.columns))
+
+    def test_get_station_market_multiple_types(self):
+        station_name = "Jita IV - Moon 4 - Caldari Navy Assembly Plant"
+        resp: pd.DataFrame = self.request_from_ESI(get_station_market, station_name)
+        resp_cache = get_station_market(station_name)
+
+        # Test: api returns correct value
+        self.assertGreater(len(resp), 1000)  # Jita should have > 1000 active orders
+        self.assertTrue((resp["location_id"] == resp["location_id"][0]).all())
+        self.assertTrue((resp["region_id"] == resp["region_id"][0]).all())
+        self.assertIn(12005, resp["type_id"].values)
+
+        # Test: buy/sell flag correct
+        resp_sell: pd.DataFrame = get_station_market(station_name, order_type="sell")
+        resp_buy: pd.DataFrame = get_station_market(station_name, order_type="buy")
+        self.assertEqual(len(resp), len(resp_sell) + len(resp_buy))
+        self.assertTrue((resp_sell["is_buy_order"] == 0).all())
+        self.assertTrue((resp_buy["is_buy_order"] == 1).all())
+        self.assertEqual(
+            len(resp_sell.merge(resp).drop_duplicates()),
+            len(resp_sell.drop_duplicates()),
+        )  # sell/buy is a subset of "all" orders
+        self.assertEqual(
+            len(resp_buy.merge(resp).drop_duplicates()), len(resp_buy.drop_duplicates())
+        )
+
+        # Test: cache return matches ESI return
+        self.assertTrue(resp.equals(resp_cache))
+        self.assertEqual(set(resp.columns), set(resp_cache.columns))
+
+    def test_get_region_market(self):
+        resp: pd.DataFrame = self.request_from_ESI(get_region_market, "The Forge")
+        resp_cache = get_region_market("The Forge")
+
+        # Test: api returns correct value
+        self.assertGreater(len(resp), 1000)
+        self.assertTrue((resp["region_id"] == resp["region_id"][0]).all())
+        self.assertIn(12005, resp["type_id"].values)
+
+        # Test: cache return matches ESI return
+        self.assertTrue(resp.equals(resp_cache))
+        self.assertEqual(set(resp.columns), set(resp_cache.columns))
+
+    def test_get_structure_market(self):
+        resp: pd.DataFrame = self.request_from_ESI(
+            get_structure_market, self.structure_name, self.cname
+        )
+        resp_cache = get_structure_market(self.structure_name, self.cname)
+
+        # Test: api returns correct value
+        self.assertGreater(len(resp), 2)  # resp contains some orders
+        if len(resp) > 1000:  # structure has a big market
+            self.assertTrue((resp["location_id"] == resp["location_id"][0]).all())
+            self.assertTrue((resp["region_id"] == resp["region_id"][0]).all())
+            self.assertIn(1405, resp["type_id"].values)  # 1405: inertial stabilizer
+
+        # Test: if sid given, cname is optional
+        resp_sid = self.request_from_ESI(
+            get_structure_market, self.sid, "some weird cname"
+        )
+        self.assertEqual(set(resp), set(resp_sid))
+
+        # Test: cache returns correctly
+        self.assertEqual(len(resp), len(resp_cache))
+        self.assertEqual(set(resp), set(resp_cache))
