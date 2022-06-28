@@ -2,16 +2,14 @@ import os
 from typing import Optional
 import pandas as pd
 
-from src import *
-from src.api.utils import reduce_volume
+from eve_tools import *
+from eve_tools.api.utils import reduce_volume
 
 
 DELIVERY_FEE = 700  # isk / m3
 BROKER_FEE = 0.01  # brokers fee at player's STRUCTURE
 TRANSACTION_TAX = 0.036
 RELIST_DISCOUNT = 0.5  # affected by advanced broker's relation skill
-
-SDEPATH = os.path.join(os.path.dirname(__file__), "src", "data", "static")
 
 
 def hauling(
@@ -60,11 +58,11 @@ def hauling(
     )
 
     # type_id -> name
-    invTypes = pd.read_csv(os.path.join(SDEPATH, "invTypes.csv.bz2"))
+    invTypes = pd.read_csv(os.path.join(SDE_DIR, "invTypes.csv.bz2"))
     invTypes = invTypes.rename(columns={"typeID": "type_id"})
 
     # type_id -> packaged volume
-    invVolumes = pd.read_csv(os.path.join(SDEPATH, "invVolumes.csv.bz2"))
+    invVolumes = pd.read_csv(os.path.join(SDE_DIR, "invVolumes.csv.bz2"))
     invVolumes = invVolumes.rename(
         columns={"typeID": "type_id", "volume": "packagedVolume"}
     )

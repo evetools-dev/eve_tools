@@ -3,8 +3,8 @@ import pandas as pd
 import time
 import unittest
 
-from src import api_cache
-from src.api.market import (
+from eve_tools import api_cache
+from eve_tools.api.market import (
     get_market_history,
     get_region_market,
     get_region_types,
@@ -13,8 +13,8 @@ from src.api.market import (
     get_structure_types,
     get_type_history,
 )
-from src.api.utils import make_cache_key, reduce_volume
-from src.data.cache import hash_key
+from eve_tools.api.utils import make_cache_key, reduce_volume
+from eve_tools.data.cache import hash_key
 from .utils import TestInit
 
 

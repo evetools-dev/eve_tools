@@ -1,8 +1,8 @@
 import os
 import sqlite3
-from typing import List
-
 import yaml
+
+from eve_tools.config import DATA_DIR
 
 orders_columns = [
     "order_id",
@@ -39,11 +39,9 @@ class ESIDBManager:
     ESIDB is also useful to store time sensitive data, such as market data, which could be used for analysis.
     """
 
-    DBDIR = os.path.realpath(os.path.dirname(__file__))
-
     def __init__(self, db_name):
         self.db_name = db_name
-        self.conn = sqlite3.connect(os.path.join(self.DBDIR, db_name + ".db"))
+        self.conn = sqlite3.connect(os.path.join(DATA_DIR, db_name + ".db"))
         self.cursor = self.conn.cursor()
 
         self.__init_tables()
@@ -101,7 +99,7 @@ class ESIDBManager:
         self.columns = ret
 
     def __init_tables(self):
-        with open(os.path.join(self.DBDIR, "dbconfig.yaml")) as f:
+        with open(os.path.join(DATA_DIR, "dbconfig.yaml")) as f:
             dbconfig = yaml.full_load(f)
         self._dbconfig = dbconfig.get(self.db_name)
         self.tables = self._dbconfig.get("tables")

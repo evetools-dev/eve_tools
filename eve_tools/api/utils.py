@@ -5,7 +5,7 @@ import time
 import hashlib
 from typing import Callable, Optional, Tuple
 
-from src.data import ESIDB
+from eve_tools.data import ESIDB
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 import os
 import yaml
 
-from src import search_id, search_structure_id
+from eve_tools import search_id, search_structure_id
 
 
 class TestInit:

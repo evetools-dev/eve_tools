@@ -3,7 +3,7 @@ import json
 
 from dataclasses import dataclass, asdict
 
-from src.config import APP_PATH
+from eve_tools.config import APP_PATH
 
 
 @dataclass

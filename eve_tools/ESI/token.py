@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Optional
 
-from src.config import TOKEN_PATH
+from eve_tools.config import TOKEN_PATH
 
 from .application import Application
 from .sso.refresh_token import refresh_token

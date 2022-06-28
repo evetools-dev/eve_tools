@@ -5,3 +5,6 @@
 *.db
 main.py
 __pycache__
+
+setup.py
+doc

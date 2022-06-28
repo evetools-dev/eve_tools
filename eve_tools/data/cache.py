@@ -6,7 +6,7 @@ from email.utils import parsedate
 from datetime import datetime, timedelta
 from typing import Union
 
-from src.data.db import ESIDBManager
+from eve_tools.data.db import ESIDBManager
 
 logger = logging.getLogger(__name__)
 

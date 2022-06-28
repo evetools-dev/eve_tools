@@ -4,7 +4,7 @@ import json
 from typing import Any, List, Optional
 from dataclasses import dataclass, field
 
-from src.config import METADATA_PATH
+from eve_tools.config import METADATA_PATH
 
 from .param import ESIParams, Param
 
