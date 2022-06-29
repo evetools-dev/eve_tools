@@ -16,7 +16,6 @@ from .market import (
     get_region_types,
     get_type_history,
     _get_type_history_async,
-    get_structure_types
+    get_structure_types,
 )
 from .check import check_type_id, _check_type_id_async
-from .utils import make_cache_key, function_hash

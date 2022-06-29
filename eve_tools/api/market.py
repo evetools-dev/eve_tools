@@ -7,8 +7,8 @@ from datetime import datetime
 from eve_tools.ESI import ESIClient
 from eve_tools.api import search_structure_id, search_id, search_station_region_id
 from eve_tools.api.search import search_system_region_id
-from eve_tools.data import ESIDB, api_cache
-from .utils import _update_or_not, _select_from_orders, make_cache_key
+from eve_tools.data import ESIDB, api_cache, make_cache_key
+from .utils import _update_or_not, _select_from_orders
 from .check import _check_type_id_async
 
 

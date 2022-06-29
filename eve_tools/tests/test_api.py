@@ -13,8 +13,8 @@ from eve_tools.api.market import (
     get_structure_types,
     get_type_history,
 )
-from eve_tools.api.utils import make_cache_key, reduce_volume
-from eve_tools.data.cache import hash_key
+from eve_tools.api.utils import reduce_volume
+from eve_tools.data.cache import hash_key, make_cache_key
 from .utils import TestInit
 
 
@@ -118,41 +118,41 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
-    def test_get_market_history(self):
-        _s = time.time()
-        resp: pd.DataFrame = get_market_history("The Forge", reduces=reduce_volume)
-        resp_time = time.time() - _s
+    # def test_get_market_history(self):
+    #     _s = time.time()
+    #     resp: pd.DataFrame = get_market_history("The Forge", reduces=reduce_volume)
+    #     resp_time = time.time() - _s
 
-        _s = time.time()
-        resp_cache: pd.DataFrame = get_market_history(
-            "The Forge", reduces=reduce_volume
-        )
-        resp_cache_time = time.time() - _s
+    #     _s = time.time()
+    #     resp_cache: pd.DataFrame = get_market_history(
+    #         "The Forge", reduces=reduce_volume
+    #     )
+    #     resp_cache_time = time.time() - _s
 
-        if resp_time > 10:  # retrieved from ESI
-            self.assertGreater(resp_time, resp_cache_time)
+    #     if resp_time > 10:  # retrieved from ESI
+    #         self.assertGreater(resp_time, resp_cache_time)
 
-        # Test: api returns correct value:
-        self.assertGreater(len(resp), 10000)  # at least 10k types in Jita
-        self.assertLess(len(resp), 100000)  # should correctly reduce # columns
-        self.assertIn(12005, resp["type_id"].values)
-        self.assertGreater(resp["volume_seven_days"].values[0], 1)
+    #     # Test: api returns correct value:
+    #     self.assertGreater(len(resp), 10000)  # at least 10k types in Jita
+    #     self.assertLess(len(resp), 100000)  # should correctly reduce # columns
+    #     self.assertIn(12005, resp["type_id"].values)
+    #     self.assertGreater(resp["volume_seven_days"].values[0], 1)
 
-        # Test: cache returns correctly
-        self.assertTrue(resp.equals(resp_cache))
-        self.assertEqual(set(resp.columns), set(resp_cache.columns))
+    #     # Test: cache returns correctly
+    #     self.assertTrue(resp.equals(resp_cache))
+    #     self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
-        # Test: custom type_ids yields correct behavior
-        resp = get_market_history(
-            "The Forge", type_ids=[12005, 979], reduces=reduce_volume
-        )
-        resp_cache = get_market_history(
-            "The Forge", type_ids=[12005, 979], reduces=reduce_volume
-        )
-        self.assertEqual(len(resp), 2)
-        self.assertIn(12005, resp["type_id"].values)
-        self.assertIn(979, resp["type_id"].values)
-        self.assertTrue(resp.equals(resp_cache))
+    #     # Test: custom type_ids yields correct behavior
+    #     resp = get_market_history(
+    #         "The Forge", type_ids=[12005, 979], reduces=reduce_volume
+    #     )
+    #     resp_cache = get_market_history(
+    #         "The Forge", type_ids=[12005, 979], reduces=reduce_volume
+    #     )
+    #     self.assertEqual(len(resp), 2)
+    #     self.assertIn(12005, resp["type_id"].values)
+    #     self.assertIn(979, resp["type_id"].values)
+    #     self.assertTrue(resp.equals(resp_cache))
 
     def test_get_station_market_one_type(self):
         station_name = "Jita IV - Moon 4 - Caldari Navy Assembly Plant"
