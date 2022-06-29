@@ -1,0 +1,4 @@
+include requirements.txt
+include LICENSE
+global-include *.yaml
+global-include *.bz2
