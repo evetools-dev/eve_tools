@@ -4,6 +4,7 @@ import logging
 from .api import *
 from .ESI import ESIClient, ESITokens, Application
 from .data import ESIDB, CacheDB, api_cache, SqliteCache
+from .config import *
 
 logging.basicConfig(
     filename="esi.log",

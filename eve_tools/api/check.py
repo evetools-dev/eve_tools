@@ -1,4 +1,4 @@
-from src.ESI import ESIClient
+from eve_tools.ESI import ESIClient
 
 
 def check_type_id(type_id: int) -> bool:

@@ -6,6 +6,7 @@ from typing import Optional, Union, List
 from .token import ESITokens
 from .metadata import ESIMetadata, ESIRequest
 from .application import ESIApplications, Application
+from .utils import ESIRequestError
 
 # Assume python int has sufficient precision
 # Assume each path is either GET or POST, not both
@@ -279,6 +280,7 @@ class ESI(object):
         with ESITokens(new_app) as token:
             token.generate()
 
+    @ESIRequestError(attempts=3)
     async def async_request(self, api_request: ESIRequest, method: str) -> dict:
         """Asynchronous requests to ESI API.
 

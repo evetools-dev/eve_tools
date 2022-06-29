@@ -4,9 +4,10 @@ import time
 from typing import Callable, List, Union, Optional
 from datetime import datetime
 
-from src.ESI import ESIClient
-from src.api import search_structure_id, search_id, search_station_region_id
-from src.data import ESIDB, api_cache
+from eve_tools.ESI import ESIClient
+from eve_tools.api import search_structure_id, search_id, search_station_region_id
+from eve_tools.api.search import search_system_region_id
+from eve_tools.data import ESIDB, api_cache
 from .utils import _update_or_not, _select_from_orders, make_cache_key
 from .check import _check_type_id_async
 
@@ -36,12 +37,6 @@ def get_structure_market(
         kwd.update_threshold: int
             An integer that specifies the minimum interval between two updates. Unit in seconds.
             Default 1200 (20 minutes). User can set this to -1 if forcing update.
-        kwd.system_id: int
-            A int for the system_id in which the structure is located.
-            system_id can be retrieved by search_structure_system_id() method, which requires additonal esi-universe.read_structures.v1 scope.
-        kwd.region_id: int
-            A int for the region_id in which the structure is located.
-            region_id can be retrieved by search_system_region_id() method, provided with the region_id of the structure.
 
     Returns:
         A pd.DataFrame that contains active orders given by ESI. Some simple sorting is added to give better readability.
@@ -70,7 +65,8 @@ def get_structure_market(
         raise ValueError(
             f'Require parameter "cname" for authentication when structure name is given instead of structure id.'
         )
-    else:
+
+    if not sid:
         sid = search_structure_id(structure_name_or_id, cname)
 
     headers = ESIClient.head(
@@ -121,10 +117,10 @@ def get_structure_market(
     df = pd.DataFrame(all_orders)
 
     df["retrieve_time"] = int(time.time())  # save some digits
-    df["region_id"] = kwd.get("region_id", 0)  # default 0
-    df["system_id"] = kwd.get(
-        "system_id", 0
-    )  # default 0, use search_structure_system_id() to find system_id
+    df["system_id"] = ESIClient.get(
+        "/universe/structures/{structure_id}/", structure_id=sid
+    ).get("solar_system_id")
+    df["region_id"] = search_system_region_id(df["system_id"][0])
 
     df.sort_values(
         ["type_id", "is_buy_order", "price"],
@@ -612,6 +608,7 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
     api_cache.set(key, resp, expires)
     return resp
 
+
 def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> List[int]:
     """Gets type_ids with active orders in a structure.
 
@@ -646,18 +643,25 @@ def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> Li
         raise ValueError(
             f'Require parameter "cname" for authentication when structure name is given instead of structure id.'
         )
-    else:
+
+    if not sid:
         sid = search_structure_id(structure_name_or_id, cname)
 
-    key = make_cache_key(get_structure_types, sid)  # cname is not important in structure related caching
+    key = make_cache_key(
+        get_structure_types, sid
+    )  # cname is not important in structure related caching
     value = api_cache.get(key)
     if value:
         return value
-    
-    resp = ESIDB.cursor.execute(f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}").fetchall()
-    if not resp:    # esi.db does not have records of structure market orders
+
+    resp = ESIDB.cursor.execute(
+        f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}"
+    ).fetchall()
+    if not resp:  # esi.db does not have records of structure market orders
         get_structure_market(sid, cname)
-        resp = ESIDB.cursor.execute(f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}").fetchall()
+        resp = ESIDB.cursor.execute(
+            f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}"
+        ).fetchall()
     ret = list(map(lambda x: x[0], resp))
-    api_cache.set(key, ret, 24*3600)    # cached for 1 day
+    api_cache.set(key, ret, 24 * 3600)  # cached for 1 day
     return ret

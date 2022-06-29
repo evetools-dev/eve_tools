@@ -2,7 +2,9 @@
 *.json
 !application.json
 *.log
-test*
 *.db
 main.py
 __pycache__
+
+setup.py
+doc

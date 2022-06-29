@@ -2,8 +2,8 @@ import os
 from typing import Optional
 import pandas as pd
 
-from src import *
-from src.api.utils import reduce_volume
+from eve_tools import *
+from eve_tools.api.utils import reduce_volume
 
 
 DELIVERY_FEE = 700  # isk / m3
@@ -58,19 +58,25 @@ def hauling(
     )
 
     # type_id -> name
-    invTypesPATH = os.path.join(
-        os.path.dirname(__file__), "src", "data", "invTypes.csv"
+    invTypes = pd.read_csv(os.path.join(SDE_DIR, "invTypes.csv.bz2"))
+    invTypes = invTypes.rename(columns={"typeID": "type_id"})
+
+    # type_id -> packaged volume
+    invVolumes = pd.read_csv(os.path.join(SDE_DIR, "invVolumes.csv.bz2"))
+    invVolumes = invVolumes.rename(
+        columns={"typeID": "type_id", "volume": "packagedVolume"}
     )
-    invTypes = pd.read_csv(
-        invTypesPATH, index_col="Unnamed: 0"
-    )  # using static data is more efficient than retrieving from ESI
 
     # Merge columns
     hauling_data = (
         jita_market[["type_id", "Jita Sell"]]
         .merge(structure_market[["type_id", col_]])
-        .merge(invTypes[["type_id", "typeName", "packagedVolume"]])
+        .merge(invTypes[["type_id", "typeName", "volume"]])
+        .merge(invVolumes, how="left", on="type_id")
         .merge(structure_volume.drop(columns="region_id"))
+    )
+    hauling_data["packagedVolume"] = hauling_data["packagedVolume"].fillna(
+        hauling_data["volume"]
     )
 
     # Calculate profitability
@@ -93,6 +99,7 @@ def hauling(
     hauling_data = hauling_data.sort_values(
         ["Profit(m)", "Profit Margin"], ascending=False, ignore_index=True
     )
+    hauling_data = hauling_data.drop(columns=["volume"])
 
     if to_local:
         hauling_data.to_csv("hauling.csv")

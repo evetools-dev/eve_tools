@@ -3,13 +3,7 @@ import json
 
 from dataclasses import dataclass, asdict
 
-try:
-    from config.definitions import APP_PATH
-except ImportError:
-    # log
-    APP_PATH = os.path.realpath(
-        os.path.join(os.path.dirname(__file__), "sso", "application.json")
-    )
+from eve_tools.config import APP_PATH
 
 
 @dataclass
