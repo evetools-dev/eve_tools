@@ -17,12 +17,12 @@ def check_type_id(type_id: int) -> bool:
         A bool that shows if type_id is valid.
     """
     resp = ESIClient.get("/universe/types/{type_id}/", type_id=type_id)
-    valid = resp.get("published")
+    valid = resp.data.get("published")
     return valid
 
 
 async def _check_type_id_async(type_id: int) -> bool:
     """Coroutine version of check_type_id(). See check_type_id()."""
     resp = await ESIClient.request("get", "/universe/types/{type_id}/", type_id=type_id)
-    valid = resp.get("published")
+    valid = resp.data.get("published")
     return valid

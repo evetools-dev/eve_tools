@@ -69,9 +69,10 @@ def get_structure_market(
     if not sid:
         sid = search_structure_id(structure_name_or_id, cname)
 
-    headers = ESIClient.head(
+    resp = ESIClient.head(
         "/markets/structures/{structure_id}/", structure_id=sid, page=1
     )
+    headers = resp.headers
 
     key = make_cache_key(get_structure_market, sid, **kwd)  # cname is not hashed
     value = api_cache.get(key)
@@ -106,12 +107,15 @@ def get_structure_market(
     else:
         pages = [page]
 
-    all_orders = ESIClient.get(
+    all_resp = ESIClient.get(
         "/markets/structures/{structure_id}/",
         async_loop=["page"],
         structure_id=sid,
         page=pages,
     )
+    all_orders = []
+    for respp in all_resp:
+        all_orders.extend(respp.data)
 
     # Formmating output and append to db
     df = pd.DataFrame(all_orders)
@@ -119,7 +123,7 @@ def get_structure_market(
     df["retrieve_time"] = int(time.time())  # save some digits
     df["system_id"] = ESIClient.get(
         "/universe/structures/{structure_id}/", structure_id=sid
-    ).get("solar_system_id")
+    ).data.get("solar_system_id")
     df["region_id"] = search_system_region_id(df["system_id"][0])
 
     df.sort_values(
@@ -202,13 +206,14 @@ def get_region_market(
     page = kwd.get("page", -1)
     update_threshold = kwd.get("update_threshold")
 
-    headers = ESIClient.head(
+    resp = ESIClient.head(
         "/markets/{region_id}/orders/",
         region_id=rid,
         order_type=order_type,
         type_id=type_id,
         page=1,
     )
+    headers = resp.headers
 
     # Attempt to read from cache
     key = make_cache_key(get_region_market, rid, order_type, type_id, **kwd)
@@ -245,7 +250,7 @@ def get_region_market(
     else:
         pages = [page]
 
-    all_orders = ESIClient.get(
+    all_resp = ESIClient.get(
         "/markets/{region_id}/orders/",
         async_loop=["page"],
         region_id=rid,
@@ -253,6 +258,9 @@ def get_region_market(
         type_id=type_id,
         page=pages,
     )
+    all_orders = []
+    for respp in all_resp:
+        all_orders.extend(respp.data)
 
     # Formmating output and append to db
     df = pd.DataFrame(all_orders)
@@ -426,6 +434,7 @@ async def _get_type_history_async(
     resp = await ESIClient.request(
         "get", "/markets/{region_id}/history/", region_id=rid, type_id=type_id
     )
+    resp = resp.data
     if len(resp) == 0:
         return
 
@@ -477,9 +486,10 @@ def get_type_history(
     value = api_cache.get(key)
     if value is not None:
         return value
-    headers = ESIClient.head(
+    resp = ESIClient.head(
         "/markets/{region_id}/history/", region_id=rid, type_id=type_id
     )
+    headers = resp.headers
     expires = headers.get("Expires")
 
     loop = asyncio.get_event_loop()
@@ -537,9 +547,8 @@ def get_market_history(
     value = api_cache.get(key)
     if value is not None:
         return value
-    headers = ESIClient.head(
-        "/markets/{region_id}/history/", region_id=rid, type_id=12005
-    )
+    resp = ESIClient.head("/markets/{region_id}/history/", region_id=rid, type_id=12005)
+    headers = resp.headers
     expires = headers.get("Expires")
 
     tasks = [
@@ -581,13 +590,7 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
             f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}."
         )
 
-    key = make_cache_key(get_region_types, rid, src)
-    value = api_cache.get(key)
-    if value:
-        return value
-
-    headers = ESIClient.head("/markets/{region_id}/types/", region_id=rid)
-    expires = headers.get("Expires")
+    headers = ESIClient.head("/markets/{region_id}/types/", region_id=rid).headers
 
     if src == "esi":
         x_pages = int(headers["X-Pages"])
@@ -599,14 +602,16 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
             region_id=rid,
             page=pages,
         )
+        ret = []
+        for respp in resp:
+            ret.extend(respp.data)
     elif src == "db":
         resp = ESIDB.cursor.execute(
             f"SELECT DISTINCT type_id FROM orders WHERE region_id={rid}"
         )
-        resp = list(map(lambda x: x[0], resp.fetchall()))
+        ret = list(map(lambda x: x[0], resp.fetchall()))
 
-    api_cache.set(key, resp, expires)
-    return resp
+    return ret
 
 
 def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> List[int]:

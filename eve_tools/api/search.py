@@ -43,7 +43,9 @@ def search_id(search: str, category: str) -> int:
             f"Invalid category given. Choose ONE from {accepted_categories}."
         )
 
-    resp = ESIClient.get("/search/", search=search, categories=category, strict="true")
+    resp = ESIClient.get(
+        "/search/", search=search, categories=category, strict="true"
+    ).data
     ret = resp.get(category)
 
     if not ret:
@@ -81,7 +83,7 @@ def search_structure_id(search: str, cname: str) -> int:
     """
     resp = ESIClient.get(
         "/search/", search=cname, categories="character", strict="true"
-    )
+    ).data
     cid = resp.get("character")
     if not cid:
         raise ValueError(f"Invalid character name given: {cname}")
@@ -94,7 +96,7 @@ def search_structure_id(search: str, cname: str) -> int:
         search=search,
         strict="true",
         cname=cname,
-    )
+    ).data
     ret = resp.get("structure")
 
     if not ret:
@@ -122,9 +124,10 @@ def search_structure_system_id(search: str, cname: str) -> int:
         A int of system_id.
     """
     sid = search_structure_id(search, cname)
-    resp = ESIClient.get("/universe/structures/{structure_id}/", structure_id=sid)
+    resp = ESIClient.get("/universe/structures/{structure_id}/", structure_id=sid).data
     system_id = resp.get("solar_system_id")
     return system_id
+
 
 def search_structure_region_id(search: str, cname: str) -> int:
     """Searches for region_id given a structure name.
@@ -137,6 +140,7 @@ def search_structure_region_id(search: str, cname: str) -> int:
     system_id = search_structure_system_id(search, cname)
     region_id = search_system_region_id(system_id)
     return region_id
+
 
 def search_station_region_id(station_id: int) -> int:
     """Searches for region_id given a station_id.
@@ -152,7 +156,7 @@ def search_station_system_id(station_id: int) -> int:
     Finds which system (4-HWWF, Jita, etc.) the given station is located.
     """
     # 404 if incorrect station_id
-    resp = ESIClient.get("/universe/stations/{station_id}/", station_id=station_id)
+    resp = ESIClient.get("/universe/stations/{station_id}/", station_id=station_id).data
     system_id = resp.get("system_id")
     return int(system_id)
 
@@ -161,10 +165,10 @@ def search_system_region_id(system_id: int) -> int:
     """Searches for region_id given a system_id.
     Finds which region_id (Vale of the Silent, etc.) the given system (4-HWWF, etc.) is located.
     """
-    resp = ESIClient.get("/universe/systems/{system_id}/", system_id=system_id)
+    resp = ESIClient.get("/universe/systems/{system_id}/", system_id=system_id).data
     constellation_id = resp.get("constellation_id")  # constellation info is not useful
     region_id = ESIClient.get(
         "/universe/constellations/{constellation_id}/",
         constellation_id=constellation_id,
-    ).get("region_id")
+    ).data.get("region_id")
     return int(region_id)
