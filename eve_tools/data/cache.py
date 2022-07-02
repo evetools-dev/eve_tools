@@ -139,9 +139,13 @@ def make_cache_key(func: Callable, *args, **kwd):
     for i in range(len(func_args)):
         if isinstance(func_args[i], Callable):
             func_args[i] = function_hash(func_args[i])
+        if isinstance(func_args[i], list):
+            func_args[i] = list(set(func_args[i]))
     for k in func_kwd:
         if isinstance(func_kwd[k], Callable):
             func_kwd[k] = function_hash(func_kwd[k])
+        if isinstance(func_kwd[k], list):
+            func_kwd[k] = list(set(func_kwd[k]))
     _h = function_hash(func)
 
     ret = (_h, str(func_args), str(func_kwd))

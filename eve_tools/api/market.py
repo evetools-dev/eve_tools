@@ -7,11 +7,12 @@ from datetime import datetime
 from eve_tools.ESI import ESIClient
 from eve_tools.api import search_structure_id, search_id, search_station_region_id
 from eve_tools.api.search import search_system_region_id
-from eve_tools.data import ESIDB, api_cache, make_cache_key
-from .utils import _update_or_not, _select_from_orders
+from eve_tools.data import ESIDB
+from .utils import _update_or_not, _select_from_orders, cache
 from .check import _check_type_id_async
 
 
+@cache
 def get_structure_market(
     structure_name_or_id: Union[str, int], cname: Optional[str] = None, **kwd
 ) -> pd.DataFrame:
@@ -74,19 +75,8 @@ def get_structure_market(
     )
     headers = resp.headers
 
-    key = make_cache_key(get_structure_market, sid, **kwd)  # cname is not hashed
-    value = api_cache.get(key)
-    if value is not None:
-        return value
+    update_threshold = kwd.get("update_threshold", 1200)
 
-    update_threshold = kwd.get("update_threshold")
-    if update_threshold:
-        expires = update_threshold
-    else:
-        expires = headers.get("Expires")
-        update_threshold = 1200
-
-    # Using cache db or get from ESI
     update_flag, retrieve_time = _update_or_not(
         time.time() - update_threshold,
         "orders",
@@ -141,11 +131,10 @@ def get_structure_market(
         index=False,
         method=ESIDB.orders_insert_update,
     )
-
-    api_cache.set(key, df, expires)
     return df
 
 
+@cache
 def get_region_market(
     region_name_or_id: Union[str, int],
     order_type: str = "all",
@@ -204,7 +193,7 @@ def get_region_market(
         )
 
     page = kwd.get("page", -1)
-    update_threshold = kwd.get("update_threshold")
+    update_threshold = kwd.get("update_threshold", 1200)
 
     resp = ESIClient.head(
         "/markets/{region_id}/orders/",
@@ -214,18 +203,6 @@ def get_region_market(
         page=1,
     )
     headers = resp.headers
-
-    # Attempt to read from cache
-    key = make_cache_key(get_region_market, rid, order_type, type_id, **kwd)
-    value = api_cache.get(key)
-    if value is not None:
-        return value
-
-    if update_threshold:
-        expires = update_threshold
-    else:
-        expires = headers.get("Expires")
-        update_threshold = 1200
 
     # Using cache db or get from ESI
     update_flag, retrieve_time = _update_or_not(
@@ -284,10 +261,10 @@ def get_region_market(
         method=ESIDB.orders_insert_update,
     )
 
-    api_cache.set(key, df, expires)
     return df
 
 
+@cache
 def get_station_market(
     station_name_or_id: Union[str, int],
     order_type: str = "all",
@@ -364,6 +341,7 @@ def get_station_market(
     return df
 
 
+@cache
 def get_jita_market(
     order_type: str = "all", type_id: Optional[int] = None
 ) -> pd.DataFrame:
@@ -465,6 +443,7 @@ async def _get_type_history_async(
     return df
 
 
+@cache
 def get_type_history(
     region_name_or_id: Union[str, int], type_id: int, reduces: Optional[Callable] = None
 ) -> pd.DataFrame:
@@ -482,23 +461,13 @@ def get_type_history(
             f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}."
         )
 
-    key = make_cache_key(get_type_history, rid, type_id, reduces)
-    value = api_cache.get(key)
-    if value is not None:
-        return value
-    resp = ESIClient.head(
-        "/markets/{region_id}/history/", region_id=rid, type_id=type_id
-    )
-    headers = resp.headers
-    expires = headers.get("Expires")
-
     loop = asyncio.get_event_loop()
     df = loop.run_until_complete(_get_type_history_async(rid, type_id, reduces))
 
-    api_cache.set(key, df, expires)
     return df
 
 
+@cache
 def get_market_history(
     region_name_or_id: Union[str, int],
     type_ids: List[int] = None,
@@ -521,9 +490,6 @@ def get_market_history(
     Returns:
         A pd.DataFrame. Each line represents market data of a type_id.
 
-    Note:
-        This function is not cached. Multiple calls on this function will have the same performance.
-
     See also:
         reduce_volume(): Reduce a market history DataFrame to volume data.
         _get_type_history_async(): Gets market history of a market type asynchronously.
@@ -537,19 +503,12 @@ def get_market_history(
             f"Argument region_name_or_id should be str or int, not {type(region_name_or_id)}."
         )
 
-    if not type_ids:
+    if type_ids is None:
         type_ids = get_region_types(rid)
         # To prevent updating market history every time region_types changes.
-        key = make_cache_key(get_market_history, rid, "all_type_ids", reduces)
-    else:
-        key = make_cache_key(get_market_history, rid, type_ids, reduces)
-
-    value = api_cache.get(key)
-    if value is not None:
-        return value
-    resp = ESIClient.head("/markets/{region_id}/history/", region_id=rid, type_id=12005)
-    headers = resp.headers
-    expires = headers.get("Expires")
+    #     key = make_cache_key(get_market_history, rid, "all_type_ids", reduces)
+    # else:
+    #     key = make_cache_key(get_market_history, rid, type_ids, reduces)
 
     tasks = [
         asyncio.ensure_future(_get_type_history_async(rid, type_id, reduces))
@@ -558,11 +517,10 @@ def get_market_history(
     loop = asyncio.get_event_loop()
     ret = loop.run_until_complete(asyncio.gather(*tasks))
     df = pd.concat(ret, ignore_index=True)
-
-    api_cache.set(key, df, expires)
     return df
 
 
+@cache
 def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> List[int]:
     """Gets type_ids that have active orders in the region.
 
@@ -614,6 +572,7 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
     return ret
 
 
+@cache(expires=24 * 3600)
 def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> List[int]:
     """Gets type_ids with active orders in a structure.
 
@@ -652,13 +611,6 @@ def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> Li
     if not sid:
         sid = search_structure_id(structure_name_or_id, cname)
 
-    key = make_cache_key(
-        get_structure_types, sid
-    )  # cname is not important in structure related caching
-    value = api_cache.get(key)
-    if value:
-        return value
-
     resp = ESIDB.cursor.execute(
         f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}"
     ).fetchall()
@@ -668,5 +620,4 @@ def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> Li
             f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}"
         ).fetchall()
     ret = list(map(lambda x: x[0], resp))
-    api_cache.set(key, ret, 24 * 3600)  # cached for 1 day
     return ret

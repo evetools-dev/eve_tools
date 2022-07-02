@@ -1,11 +1,12 @@
-import inspect
+from functools import wraps
 import logging
 import pandas as pd
 import time
-import hashlib
 from typing import Callable, Optional, Tuple
 
-from eve_tools.data import ESIDB
+from eve_tools.data import ESIDB, api_cache, make_cache_key
+from eve_tools.data.db import ESIDBManager
+from eve_tools.ESI import ESIClient
 
 logger = logging.getLogger(__name__)
 
@@ -158,3 +159,70 @@ def reduce_volume(df: pd.DataFrame) -> pd.DataFrame:
 
     row = [volume_seven_days, volume_thirty_days]
     return pd.DataFrame([row], columns=target)
+
+
+def cache(
+    func: Optional[Callable] = None,
+    expires: Optional[int] = None,
+    cache_instance: Optional[ESIDBManager] = None,
+):
+    """A decorator that handles api caching.
+
+    Handles caching on api level. User should expect a functional caching functionality.
+    It is designed to hide caching operation from users.
+    Future designs may use an ESIAPI decorator class to wrap up cache and leave space for other functionality.
+
+    Args:
+        func: Callable
+            An ESI API that needs to be cached for result.
+        expires: int
+            User of this decorator can set a custom expire time.
+            Some api could be updated in a longer interval than what's specified in the expired headers.
+        cache_instance: ESIDBManager
+            A cache instance to which cache entries are stored and retrieved.
+            If not given, use default api_cache instance.
+
+    Note:
+        Priority on arg ``expires`` (from high to low):
+            1. API user specified: get_market_history(..., expires=24*3600)
+            2. cache user specified: @cache(expires=24*3600)
+            3. expires headers from ESI: resp.headers["Expires"]
+
+    """
+
+    def wrapper_api_cache(func: Callable):
+        @wraps(func)
+        def wrapped_api_cache(*args, **kwd):
+            nonlocal expires, cache_instance  # avoid unboundLocalError
+
+            if cache_instance is None:
+                cache_instance = api_cache
+
+            key = make_cache_key(func, *args, **kwd)
+            value = cache_instance.get(key)
+            if value is not None:  # cache hit
+                return value
+
+            # api_session for recording Expires entry in ESI response headers
+            ESIClient._start_api_session()
+            ret = func(*args, **kwd)  # exec
+            ESIClient._end_api_session()
+
+            # Priority: kwd["expires"] > cache(expires) > ESIResponse.expires
+            expires = kwd.get("expires", expires)
+            if expires is None:
+                expires = ESIClient._api_session_record
+
+            # expires could be a datetime formatted string, or seconds in integer.
+            cache_instance.set(key, ret, expires)
+            return ret
+
+        return wrapped_api_cache
+
+    if func is None:
+        return wrapper_api_cache
+
+    if callable(func):
+        return wrapper_api_cache(func)
+
+    raise NotImplementedError
