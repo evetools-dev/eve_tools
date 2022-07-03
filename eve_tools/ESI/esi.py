@@ -1,5 +1,7 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
+from email.utils import parsedate
 import logging
 import aiohttp
 from typing import Coroutine, Optional, Union, List
@@ -30,12 +32,15 @@ class ESIResponse:
             A case insensitive dictionary with HTTP headers of response.
         data: dict | List | int
             A json serialized response body, a dictionary or a list or an int.
+        expires: str | None
+            A RFC7231 formatted datetime string, if any.
     """
 
     status: int
     method: str
     headers: dict
     data: Optional[Union[dict, List, int]]
+    expires: Optional[str] = None
 
 
 class ESI(object):
@@ -269,11 +274,25 @@ class ESI(object):
     def _api_session_recorder(_coro: Coroutine):
         """Records useful info from ESIResponse that can be fed to other objects."""
 
-        async def _api_session_recorder_wrapped(_caller_self, *args, **kwd):
-            resp: ESIResponse = await _coro(_caller_self, *args, **kwd)
-            # expires = resp.headers.get("expires")
-            # if expires:
-            #     self._api_session_record
+        async def _api_session_recorder_wrapped(_self, *args, **kwd):
+            resp: ESIResponse = await _coro(
+                _self, *args, **kwd
+            )  # this _self should be an instance of ESI
+
+            if not _self._api_session:
+                return resp
+
+            expires = resp.expires
+
+            if not _self._api_session_record:
+                _self._api_session_record = expires
+
+            # Use the earliest expire
+            if expires:
+                expires_dt = datetime(*parsedate(expires)[:6])
+                record_dt = datetime(*parsedate(_self._api_session_record)[:6])
+                if expires_dt < record_dt:
+                    _self._api_session_record = expires
             return resp
 
         return _api_session_recorder_wrapped
@@ -307,13 +326,25 @@ class ESI(object):
                 api_request.url, params=api_request.params, headers=api_request.headers
             ) as req:
                 data = await req.json()
-                resp = ESIResponse(req.status, req.method, dict(req.headers), data)
+                resp = ESIResponse(
+                    req.status,
+                    req.method,
+                    dict(req.headers),
+                    data,
+                    req.headers.get("Expires"),
+                )
 
         elif method == "head":
             async with self._async_session.head(
                 api_request.url, params=api_request.params, headers=api_request.headers
             ) as req:
-                resp = ESIResponse(req.status, req.method, dict(req.headers), None)
+                resp = ESIResponse(
+                    req.status,
+                    req.method,
+                    dict(req.headers),
+                    None,
+                    req.headers.get("Expires"),
+                )
 
         return resp
 
@@ -506,8 +537,15 @@ class ESI(object):
             self._async_session._connector = None
 
     def _start_api_session(self):
+        """Starts recording useful ESIResponse from API calls."""
         self._api_session = True
+        self._api_session_record = None
 
     def _end_api_session(self):
+        """Ends recording ESIResponse from API calls."""
         self._api_session = False
+
+    def _clear_api_record(self):
+        """Clears _api_session_record entry of the instance."""
         self._api_session_record = None
+        self._api_session = False
