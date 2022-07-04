@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 # 0.1.1: Packaging to PyPI
 version = "0.1.1"
-test_version = "0.1.1.1"
+test_version = "0.1.1.3"
 
 install_requirements = [
     "pandas",
@@ -19,7 +19,7 @@ with open("README.md", "r") as rm:
 
 setup(
     name="eve_tools",
-    version=version,
+    version=test_version,
     author="Hanbo",
     author_email="ghbhanbo@gmail.com",
     description="Tools collection for EVE game plays.",
