@@ -128,7 +128,7 @@ def _select_from_orders(
     else:
         is_buy_order_filter = 1  # is_buy_order != 1 -> is_buy_order == 0
 
-    where_clause = " AND ".join([f"{k}={v}" for k, v in kwd.items()])
+    where_clause = " AND ".join([f"{k}={v}" for k, v in kwd.items() if v is not None])
 
     if type_id:
         rows = ESIDB.cursor.execute(
