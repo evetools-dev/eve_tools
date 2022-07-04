@@ -1,0 +1,5 @@
+include requirements.txt
+include LICENSE
+global-include *.yaml
+global-include *.bz2
+recursive-include eve_tools/ESI/sso *.py application.json

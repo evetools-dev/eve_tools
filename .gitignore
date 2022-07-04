@@ -6,5 +6,12 @@
 main.py
 __pycache__
 
-setup.py
 doc
+dist
+*.egg-info
+*.vscode
+*.bat
+venv
+
+*tox
+tox.ini

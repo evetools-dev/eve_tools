@@ -1,11 +1,12 @@
-import inspect
+from functools import wraps
 import logging
 import pandas as pd
 import time
-import hashlib
 from typing import Callable, Optional, Tuple
 
-from eve_tools.data import ESIDB
+from eve_tools.data import ESIDB, api_cache, make_cache_key
+from eve_tools.data.db import ESIDBManager
+from eve_tools.ESI import ESIClient
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ def _select_from_orders(
     else:
         is_buy_order_filter = 1  # is_buy_order != 1 -> is_buy_order == 0
 
-    where_clause = " AND ".join([f"{k}={v}" for k, v in kwd.items()])
+    where_clause = " AND ".join([f"{k}={v}" for k, v in kwd.items() if v is not None])
 
     if type_id:
         rows = ESIDB.cursor.execute(
@@ -160,51 +161,68 @@ def reduce_volume(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame([row], columns=target)
 
 
-def make_cache_key(func: Callable, *args, **kwd):
-    """Encodes an api to a hashable key.
+def cache(
+    func: Optional[Callable] = None,
+    expires: Optional[int] = None,
+    cache_instance: Optional[ESIDBManager] = None,
+):
+    """A decorator that handles api caching.
 
-    The API function is hashed using function_hash() to a string.
-    The args and kwds are converted to strings.
-    If any of args or kwd is a function, this function encodes them
-    by inspecting source code. If the source code is changed, this function encodes a different value.
+    Handles caching on api level. User should expect a functional caching functionality.
+    It is designed to hide caching operation from users.
+    Future designs may use an ESIAPI decorator class to wrap up cache and leave space for other functionality.
 
     Args:
-        func: An API function defined under src/api directory.
-        args: Argument passed to the api function in argument form.
-        kwd: Keyword arguments passed to the api function.
+        func: Callable
+            An ESI API that needs to be cached for result.
+        expires: int
+            User of this decorator can set a custom expire time.
+            Some api could be updated in a longer interval than what's specified in the expired headers.
+        cache_instance: ESIDBManager
+            A cache instance to which cache entries are stored and retrieved.
+            If not given, use default api_cache instance.
 
-    Returns:
-        A set containing (function_hash, str(args), str(kwd))
+    Note:
+        Priority on arg ``expires`` (from high to low):
+            1. API user specified: get_market_history(..., expires=24*3600)
+            2. cache user specified: @cache(expires=24*3600)
+            3. expires headers from ESI: resp.headers["Expires"]
 
-    Examples:
-    >>> # Encode: get_market_history("The Forge", reduces=reduce_volume)
-    >>> key_before = make_cache_key(get_market_history, "The Forge", reduce_volume)
-    >>> # If reduce_volume is changed, even if a space or an extra line is added
-    >>> key_after = make_cache_key(get_market_history, "The Forge", reduce_volume)
-    >>> assert key_before != key_after
     """
-    func_args = list(args)
-    func_kwd = kwd.copy()
-    for i in range(len(func_args)):
-        if isinstance(func_args[i], Callable):
-            func_args[i] = function_hash(func_args[i])
-    for k in func_kwd:
-        if isinstance(func_kwd[k], Callable):
-            func_kwd[k] = function_hash(func_kwd[k])
-    _h = function_hash(func)
 
-    ret = (_h, str(func_args), str(func_kwd))
-    logger.debug("Making cache key for %s: %s", func.__qualname__, str(ret))
-    return ret
+    def wrapper_api_cache(func: Callable):
+        @wraps(func)
+        def wrapped_api_cache(*args, **kwd):
+            nonlocal expires, cache_instance  # avoid unboundLocalError
 
+            if cache_instance is None:
+                cache_instance = api_cache
 
-def function_hash(func: Callable):
-    """Hashes a function.
+            key = make_cache_key(func, *args, **kwd)
+            value = cache_instance.get(key)
+            if value is not None:  # cache hit
+                return value
 
-    Hashes a function based on its source code. If the source code is modified in any way,
-    this function hashes to a different value.
-    """
-    return (
-        "esi_function-"
-        + hashlib.sha256(inspect.getsource(func).encode("utf-8")).hexdigest()
-    )
+            # api_session for recording Expires entry in ESI response headers
+            ESIClient._start_api_session()
+            ret = func(*args, **kwd)  # exec
+            ESIClient._end_api_session()
+
+            # Priority: kwd["expires"] > cache(expires) > ESIResponse.expires
+            expires = kwd.get("expires", expires)
+            if expires is None:
+                expires = ESIClient._api_session_record
+
+            # expires could be a datetime formatted string, or seconds in integer.
+            cache_instance.set(key, ret, expires)
+            return ret
+
+        return wrapped_api_cache
+
+    if func is None:
+        return wrapper_api_cache
+
+    if callable(func):
+        return wrapper_api_cache(func)
+
+    raise NotImplementedError

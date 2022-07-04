@@ -1,7 +1,10 @@
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime
+from email.utils import parsedate
 import logging
 import aiohttp
-from typing import Optional, Union, List
+from typing import Coroutine, Optional, Union, List
 
 from .token import ESITokens
 from .metadata import ESIMetadata, ESIRequest
@@ -12,6 +15,32 @@ from .utils import ESIRequestError
 # Assume each path is either GET or POST, not both
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ESIResponse:
+    """Response returned by ESI.request() family.
+
+    User should never create ESIResponse but gets it from ESI.request() calls.
+
+    Attributes: (referencing aiohttp doc)
+        status: int
+            HTTP status code of response.
+        method: str
+            Request's method.
+        headers: dict
+            A case insensitive dictionary with HTTP headers of response.
+        data: dict | List | int
+            A json serialized response body, a dictionary or a list or an int.
+        expires: str | None
+            A RFC7231 formatted datetime string, if any.
+    """
+
+    status: int
+    method: str
+    headers: dict
+    data: Optional[Union[dict, List, int]]
+    expires: Optional[str] = None
 
 
 class ESI(object):
@@ -34,6 +63,10 @@ class ESI(object):
 
         ### Exit flag
         self._app_changed = False
+
+        ### API session
+        self._api_session = False
+        self._api_session_record = None
 
     def get(
         self,
@@ -130,7 +163,8 @@ class ESI(object):
 
         ret = []
         for task in tasks:
-            ret.extend(task.result())  # well, let's forget about memory
+            # each task.result() is a ESIResponse instance
+            ret.append(task.result())  # well, let's forget about memory
 
         return ret
 
@@ -193,7 +227,7 @@ class ESI(object):
             kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
 
         Returns:
-            A dictionary containing json serialized data from ESI.
+            An instance of ESIResponse containing response of the request.
 
         Raises:
             NotImplementedError: Request type POST/DELETE/PUT is not supported.
@@ -237,6 +271,83 @@ class ESI(object):
 
         return res
 
+    def _api_session_recorder(_coro: Coroutine):
+        """Records useful info from ESIResponse that can be fed to other objects."""
+
+        async def _api_session_recorder_wrapped(_self, *args, **kwd):
+            resp: ESIResponse = await _coro(
+                _self, *args, **kwd
+            )  # this _self should be an instance of ESI
+
+            if not _self._api_session:
+                return resp
+
+            expires = resp.expires
+
+            if not _self._api_session_record:
+                _self._api_session_record = expires
+
+            # Use the earliest expire
+            if expires:
+                expires_dt = datetime(*parsedate(expires)[:6])
+                record_dt = datetime(*parsedate(_self._api_session_record)[:6])
+                if expires_dt < record_dt:
+                    _self._api_session_record = expires
+            return resp
+
+        return _api_session_recorder_wrapped
+
+    @ESIRequestError(attempts=3)
+    @_api_session_recorder
+    async def async_request(self, api_request: ESIRequest, method: str) -> dict:
+        """Asynchronous requests to ESI API.
+
+        Uses aiohttp to asynchronously request GET to ESI API.
+        ClientSession is created once for each instance and shared by multiple async_request call of the instance.
+        Default having maximum 100 open connections (100 async_request pending).
+
+        Args:
+            api_request: ESIRequest
+                A fully initialized ESIRequest with url, params, headers field filled in, given to aiohttp.ClientSession.get.
+            method: str
+                A str for HTTP request method.
+
+        Returns:
+            An instance of ESIResponse containing response of the request. Memory allocation assumed not to be a problem.
+        """
+        if not self._async_session:
+            self._async_session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
+            )  # default maximum 100 connections
+
+        # no encoding: "4-HWF" stays what it is
+        if method == "get":
+            async with self._async_session.get(
+                api_request.url, params=api_request.params, headers=api_request.headers
+            ) as req:
+                data = await req.json()
+                resp = ESIResponse(
+                    req.status,
+                    req.method,
+                    dict(req.headers),
+                    data,
+                    req.headers.get("Expires"),
+                )
+
+        elif method == "head":
+            async with self._async_session.head(
+                api_request.url, params=api_request.params, headers=api_request.headers
+            ) as req:
+                resp = ESIResponse(
+                    req.status,
+                    req.method,
+                    dict(req.headers),
+                    None,
+                    req.headers.get("Expires"),
+                )
+
+        return resp
+
     def add_app_generate_token(
         self, clientId: str, scope: str, callbackURL: Optional[str] = None
     ) -> None:
@@ -279,42 +390,6 @@ class ESI(object):
 
         with ESITokens(new_app) as token:
             token.generate()
-
-    @ESIRequestError(attempts=3)
-    async def async_request(self, api_request: ESIRequest, method: str) -> dict:
-        """Asynchronous requests to ESI API.
-
-        Uses aiohttp to asynchronously request GET to ESI API.
-        ClientSession is created once for each instance and shared by multiple async_request call of the instance.
-        Default having maximum 100 open connections (100 async_request pending).
-
-        Args:
-            api_request: ESIRequest
-                A fully initialized ESIRequest with url, params, headers field filled in, given to aiohttp.ClientSession.get.
-            method: str
-                A str for HTTP request method.
-
-        Returns:
-            A dictionary containing the response body or response header. Memory allocation assumed not to be a problem.
-        """
-        if not self._async_session:
-            self._async_session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
-            )  # default maximum 100 connections
-
-        # no encoding: "4-HWF" stays what it is
-        if method == "get":
-            async with self._async_session.get(
-                api_request.url, params=api_request.params, headers=api_request.headers
-            ) as req:
-                return (
-                    await req.json()
-                )  # read entire response to memory, which shouldn't be a problem now.
-        elif method == "head":
-            async with self._async_session.head(
-                api_request.url, params=api_request.params, headers=api_request.headers
-            ) as req:
-                return dict(req.headers)
 
     def _get_auth_headers(
         self, tokens: ESITokens, cname: Optional[str] = "any"
@@ -460,3 +535,17 @@ class ESI(object):
             if self._async_session._connector_owner:
                 self._async_session._connector.close()
             self._async_session._connector = None
+
+    def _start_api_session(self):
+        """Starts recording useful ESIResponse from API calls."""
+        self._api_session = True
+        self._api_session_record = None
+
+    def _end_api_session(self):
+        """Ends recording ESIResponse from API calls."""
+        self._api_session = False
+
+    def _clear_api_record(self):
+        """Clears _api_session_record entry of the instance."""
+        self._api_session_record = None
+        self._api_session = False

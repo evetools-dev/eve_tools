@@ -4,3 +4,4 @@ requests
 aiohttp
 python-jose
 pyperclip
+pyyaml

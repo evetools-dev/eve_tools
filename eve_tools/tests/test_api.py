@@ -1,9 +1,8 @@
-from typing import Callable
 import pandas as pd
 import time
 import unittest
 
-from eve_tools import api_cache
+
 from eve_tools.api.market import (
     get_market_history,
     get_region_market,
@@ -13,24 +12,13 @@ from eve_tools.api.market import (
     get_structure_types,
     get_type_history,
 )
-from eve_tools.api.utils import make_cache_key, reduce_volume
-from eve_tools.data.cache import hash_key
-from .utils import TestInit
+from eve_tools.api.utils import reduce_volume
+from .utils import TestInit, request_from_ESI
 
 
 class TestMarket(unittest.TestCase, TestInit):
-    @staticmethod
-    def request_from_ESI(esi_api: Callable, *args, **kwd):
-        resp = esi_api(*args, **kwd)
-        key = make_cache_key(esi_api, *args, **kwd)
-        if api_cache._last_used and api_cache._last_used == hash_key(key):
-            # resp returned from cache: evit it
-            api_cache.evit(key)
-            resp = esi_api(*args, **kwd)  # retrieve from ESI
-        return resp
-
     def test_get_structure_types(self):
-        resp = self.request_from_ESI(
+        resp = request_from_ESI(
             get_structure_types, self.structure_name, self.cname
         )
         resp_cache = get_structure_types(self.structure_name, self.cname)
@@ -42,7 +30,7 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertIn(1405, resp)  # 1405: inertial stabilizer
 
         # Test: if sid given, cname is optional
-        resp_sid = self.request_from_ESI(
+        resp_sid = request_from_ESI(
             get_structure_types, self.sid, "some weird cname"
         )
         self.assertEqual(set(resp), set(resp_sid))
@@ -52,7 +40,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertEqual(set(resp), set(resp_cache))
 
     def test_get_region_types_esi(self):
-        resp = self.request_from_ESI(get_region_types, 10000002, "esi")
+        resp = request_from_ESI(get_region_types, 10000002, "esi")
         resp_cache = get_region_types(10000002, "esi")
 
         # Test: api returns correct value
@@ -65,12 +53,12 @@ class TestMarket(unittest.TestCase, TestInit):
 
         # Test: incorrect usage
         with self.assertRaises(ValueError):
-            self.request_from_ESI(get_region_types, "region not exists", "esi")
+            request_from_ESI(get_region_types, "region not exists", "esi")
 
     # test_get_region_types_db(self)
 
     def test_get_type_history_no_reduce(self):
-        resp: pd.DataFrame = self.request_from_ESI(get_type_history, 10000002, 12005)
+        resp: pd.DataFrame = request_from_ESI(get_type_history, 10000002, 12005)
         resp_cache: pd.DataFrame = get_type_history(10000002, 12005)
 
         # Test: api returns correct value
@@ -100,7 +88,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
     def test_get_type_history_with_reduce(self):
-        resp: pd.DataFrame = self.request_from_ESI(
+        resp: pd.DataFrame = request_from_ESI(
             get_type_history, 10000002, 12005, reduce_volume
         )
         resp_cache: pd.DataFrame = get_type_history(10000002, 12005, reduce_volume)
@@ -118,45 +106,45 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
-    def test_get_market_history(self):
-        _s = time.time()
-        resp: pd.DataFrame = get_market_history("The Forge", reduces=reduce_volume)
-        resp_time = time.time() - _s
+    # def test_get_market_history(self):
+    #     _s = time.time()
+    #     resp: pd.DataFrame = get_market_history("The Forge", reduces=reduce_volume)
+    #     resp_time = time.time() - _s
 
-        _s = time.time()
-        resp_cache: pd.DataFrame = get_market_history(
-            "The Forge", reduces=reduce_volume
-        )
-        resp_cache_time = time.time() - _s
+    #     _s = time.time()
+    #     resp_cache: pd.DataFrame = get_market_history(
+    #         "The Forge", reduces=reduce_volume
+    #     )
+    #     resp_cache_time = time.time() - _s
 
-        if resp_time > 10:  # retrieved from ESI
-            self.assertGreater(resp_time, resp_cache_time)
+    #     if resp_time > 10:  # retrieved from ESI
+    #         self.assertGreater(resp_time, resp_cache_time)
 
-        # Test: api returns correct value:
-        self.assertGreater(len(resp), 10000)  # at least 10k types in Jita
-        self.assertLess(len(resp), 100000)  # should correctly reduce # columns
-        self.assertIn(12005, resp["type_id"].values)
-        self.assertGreater(resp["volume_seven_days"].values[0], 1)
+    #     # Test: api returns correct value:
+    #     self.assertGreater(len(resp), 10000)  # at least 10k types in Jita
+    #     self.assertLess(len(resp), 100000)  # should correctly reduce # columns
+    #     self.assertIn(12005, resp["type_id"].values)
+    #     self.assertGreater(resp["volume_seven_days"].values[0], 1)
 
-        # Test: cache returns correctly
-        self.assertTrue(resp.equals(resp_cache))
-        self.assertEqual(set(resp.columns), set(resp_cache.columns))
+    #     # Test: cache returns correctly
+    #     self.assertTrue(resp.equals(resp_cache))
+    #     self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
-        # Test: custom type_ids yields correct behavior
-        resp = get_market_history(
-            "The Forge", type_ids=[12005, 979], reduces=reduce_volume
-        )
-        resp_cache = get_market_history(
-            "The Forge", type_ids=[12005, 979], reduces=reduce_volume
-        )
-        self.assertEqual(len(resp), 2)
-        self.assertIn(12005, resp["type_id"].values)
-        self.assertIn(979, resp["type_id"].values)
-        self.assertTrue(resp.equals(resp_cache))
+    #     # Test: custom type_ids yields correct behavior
+    #     resp = get_market_history(
+    #         "The Forge", type_ids=[12005, 979], reduces=reduce_volume
+    #     )
+    #     resp_cache = get_market_history(
+    #         "The Forge", type_ids=[12005, 979], reduces=reduce_volume
+    #     )
+    #     self.assertEqual(len(resp), 2)
+    #     self.assertIn(12005, resp["type_id"].values)
+    #     self.assertIn(979, resp["type_id"].values)
+    #     self.assertTrue(resp.equals(resp_cache))
 
     def test_get_station_market_one_type(self):
         station_name = "Jita IV - Moon 4 - Caldari Navy Assembly Plant"
-        resp: pd.DataFrame = self.request_from_ESI(
+        resp: pd.DataFrame = request_from_ESI(
             get_station_market, station_name, order_type="all", type_id=12005
         )
         resp_cache = get_station_market(station_name, order_type="all", type_id=12005)
@@ -166,10 +154,10 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue((resp["type_id"] == 12005).all())
 
         # Test: buy/sell flag correct
-        resp_sell: pd.DataFrame = self.request_from_ESI(
+        resp_sell: pd.DataFrame = request_from_ESI(
             get_station_market, station_name, order_type="sell", type_id=12005
         )
-        resp_buy: pd.DataFrame = self.request_from_ESI(
+        resp_buy: pd.DataFrame = request_from_ESI(
             get_station_market, station_name, order_type="buy", type_id=12005
         )
         self.assertGreater(len(resp), len(resp_sell))
@@ -190,7 +178,7 @@ class TestMarket(unittest.TestCase, TestInit):
 
     def test_get_station_market_multiple_types(self):
         station_name = "Jita IV - Moon 4 - Caldari Navy Assembly Plant"
-        resp: pd.DataFrame = self.request_from_ESI(get_station_market, station_name)
+        resp: pd.DataFrame = request_from_ESI(get_station_market, station_name)
         resp_cache = get_station_market(station_name)
 
         # Test: api returns correct value
@@ -218,7 +206,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
     def test_get_region_market(self):
-        resp: pd.DataFrame = self.request_from_ESI(get_region_market, "The Forge")
+        resp: pd.DataFrame = request_from_ESI(get_region_market, "The Forge")
         resp_cache = get_region_market("The Forge")
 
         # Test: api returns correct value
@@ -231,7 +219,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
     def test_get_structure_market(self):
-        resp: pd.DataFrame = self.request_from_ESI(
+        resp: pd.DataFrame = request_from_ESI(
             get_structure_market, self.structure_name, self.cname
         )
         resp_cache = get_structure_market(self.structure_name, self.cname)
@@ -244,7 +232,7 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertIn(1405, resp["type_id"].values)  # 1405: inertial stabilizer
 
         # Test: if sid given, cname is optional
-        resp_sid = self.request_from_ESI(
+        resp_sid = request_from_ESI(
             get_structure_market, self.sid, "some weird cname"
         )
         self.assertEqual(set(resp), set(resp_sid))
