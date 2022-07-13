@@ -120,7 +120,7 @@ def make_cache_key(func: Callable, *args, **kwd):
     by inspecting source code. If the source code is changed, this function encodes a different value.
 
     Args:
-        func: An API function defined under src/api directory.
+        func: An API function defined under eve_tools/api directory.
         args: Argument passed to the api function in argument form.
         kwd: Keyword arguments passed to the api function.
 
