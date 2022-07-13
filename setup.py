@@ -19,7 +19,7 @@ with open("README.md", "r") as rm:
 
 setup(
     name="eve_tools",
-    version=test_version,
+    version=version,
     author="Hanbo",
     author_email="ghbhanbo@gmail.com",
     description="Tools collection for EVE game plays.",
