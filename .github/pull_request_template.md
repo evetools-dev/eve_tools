@@ -1,0 +1,2 @@
+- [ ] Closes #xxxx (Replace xxxx with the Github issue number)
+- [ ] [Tests added and passed] if fixing a bug or adding a new feature
