@@ -203,15 +203,14 @@ def cache(
             if value is not None:  # cache hit
                 return value
 
-            # api_session for recording Expires entry in ESI response headers
-            ESIClient._start_api_session()
+            # record_session for recording "Expires" entry in ESI response headers
+            ESIClient._clear_record(field="expires")
             ret = func(*args, **kwd)  # exec
-            ESIClient._end_api_session()
 
             # Priority: kwd["expires"] > cache(expires) > ESIResponse.expires
             expires = kwd.get("expires", expires)
             if expires is None:
-                expires = ESIClient._api_session_record
+                expires = ESIClient._record.expires
 
             # expires could be a datetime formatted string, or seconds in integer.
             cache_instance.set(key, ret, expires)
