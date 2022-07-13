@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 
 from eve_tools.ESI import ESIClient
 from eve_tools.ESI.metadata import ESIMetadata, ESIRequest
@@ -52,7 +53,17 @@ class TestESI(unittest.TestCase):
         expire_2 = ESIClient.head(
             "/markets/{region_id}/history/", region_id=10000002, type_id=12005
         ).expires
-        expected_expires = min(expire_1, expire_2)  # earliest expires
+        dt_format = "%a, %d %b %Y %H:%M:%S %Z"
+        expected_expires = (
+            datetime.strftime(
+                min(
+                    datetime.strptime(expire_1, dt_format),
+                    datetime.strptime(expire_2, dt_format),
+                ),
+                dt_format,
+            )
+            + "GMT"
+        )
         self.assertEqual(expected_expires, ESIClient._record.expires)
         self.assertEqual(ESIClient._record.requests, 2)
         self.assertGreater(ESIClient._record.timer, 0.0001)

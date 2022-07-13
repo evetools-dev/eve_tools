@@ -14,7 +14,7 @@ from .check import _check_type_id_async
 
 @cache
 def get_structure_market(
-    structure_name_or_id: Union[str, int], cname: Optional[str] = None, **kwd
+    structure_name_or_id: Union[str, int], cname: str = "any", **kwd
 ) -> pd.DataFrame:
     """Retrieves market orders of a player structure.
 
@@ -28,23 +28,20 @@ def get_structure_market(
             A string or an integer for the structure.
             If a string is given, it should be the precise name of the structure.
             If an integer is given, it should be a valid structure_id.
-        cname: str | None
-            A string for the character name, used by the search_structure_id to search for structure_id of a given structure name.
-            This character should have docking (market) access to the structure. See search_structure_id().
-            If a structure name is given, cname is required. If a structure id is given, cname is optional.
+        cname: str
+            cname's character_id will be used in searching structure_id. 
+            If supplied, this character needs to have docking access to structure.
         kwd.page: int
             An integer that specifies which page to retrieve from ESI. Defaul retrieving all orders from ESI.
             Page number is purely random and speficying a page number is only useful in testing.
-        kwd.update_threshold: int
-            An integer that specifies the minimum interval between two updates. Unit in seconds.
-            Default 1200 (20 minutes). User can set this to -1 if forcing update.
+        kwd.expires: int
+            The minimum interval between two updates. Unit in seconds.
 
     Returns:
         A pd.DataFrame that contains active orders given by ESI. Some simple sorting is added to give better readability.
 
     Raises:
         TypeError: Argument structure_name_or_id should be str or int, not {type(structure_name_or_id)}.
-        ValueError: Require parameter "cname" for authentication when structure name is given instead of structure id.
 
     Some facts:
         1. ESI updates its orders every 5 minutes.
@@ -61,21 +58,15 @@ def get_structure_market(
             f"Argument structure_name_or_id should be str or int, not {type(structure_name_or_id)}."
         )
 
-    if not sid and not cname:
-        # if s_id not given, cname is required for search_structure_id api
-        raise ValueError(
-            f'Require parameter "cname" for authentication when structure name is given instead of structure id.'
-        )
-
     if not sid:
-        sid = search_structure_id(structure_name_or_id, cname)
+        sid = search_structure_id(structure_name_or_id, cname=cname)
 
     resp = ESIClient.head(
         "/markets/structures/{structure_id}/", structure_id=sid, page=1
     )
     headers = resp.headers
 
-    update_threshold = kwd.get("update_threshold", 1200)
+    update_threshold = kwd.get("expires", 1200)
 
     update_flag, retrieve_time = _update_or_not(
         time.time() - update_threshold,
@@ -154,15 +145,14 @@ def get_region_market(
             If a string is given, it should be the precise region name, such as "The Forge".
             If an integer is given, it should be a valid region_id.
         order_type: str
-            A string for the optional order_type parameter. Default to "all".
-            One of ["all", "sell", "buy"].
+            One of ["all", "sell", "buy"]. Default to "all".
         type_id: int | None
             An integer that specifies the type_id to retrieve from ESI.
             If type_id is given, only returns market orders of that specific type.
         kwd.page: int
             An integer that specifies which page to retrieve from ESI. Defaul retrieving all orders from ESI (~300 pages).
             Page number is purely random and speficying a page number is only useful in testing.
-        kwd.update_threshold: int
+        kwd.expires: int
             An integer that specifies the minimum interval between two updates. Unit in seconds.
             Default 1200 (20 minutes). User can set this to -1 if forcing update.
 
@@ -193,7 +183,7 @@ def get_region_market(
         )
 
     page = kwd.get("page", -1)
-    update_threshold = kwd.get("update_threshold", 1200)
+    update_threshold = kwd.get("expires", 1200)
 
     resp = ESIClient.head(
         "/markets/{region_id}/orders/",
@@ -287,7 +277,7 @@ def get_station_market(
         type_id: int | None
             An integer that specifies the type_id to retrieve from ESI.
             If type_id is given, only returns market orders of that specific type.
-        kwd.update_threshold: int
+        kwd.expires: int
             An integer that specifies the minimum interval between two updates. Unit in seconds.
             Default 1200 (20 minutes). User can set this to -1 if forcing update.
 
@@ -316,7 +306,7 @@ def get_station_market(
     # Get the region that the station is in
     region_id = search_station_region_id(station_id)
 
-    update_threshold = kwd.get("update_threshold", 1200)
+    update_threshold = kwd.get("expires", 1200)
     no_update_flag, retrieve_time = _update_or_not(
         time.time() - update_threshold,
         "orders",
@@ -505,11 +495,7 @@ def get_market_history(
 
     if type_ids is None:
         type_ids = get_region_types(rid)
-        # To prevent updating market history every time region_types changes.
-    #     key = make_cache_key(get_market_history, rid, "all_type_ids", reduces)
-    # else:
-    #     key = make_cache_key(get_market_history, rid, type_ids, reduces)
-
+    
     tasks = [
         asyncio.ensure_future(_get_type_history_async(rid, type_id, reduces))
         for type_id in type_ids
@@ -573,7 +559,7 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
 
 
 @cache(expires=24 * 3600)
-def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> List[int]:
+def get_structure_types(structure_name_or_id: Union[str, int], cname: str = "any") -> List[int]:
     """Gets type_ids with active orders in a structure.
 
     Searches market orders in esi.db database, which includes current and possibly some historic orders.
@@ -584,10 +570,9 @@ def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> Li
             A string or an integer for the structure.
             If a string is given, it should be the precise name of the structure.
             If an integer is given, it should be a valid structure_id.
-        cname: str | None
-            A string for the character name, used by the search_structure_id to search for structure_id of a given structure name.
-            This character should have docking (and market) access to the structure. See search_structure_id().
-            If a structure name is given, cname is required. If a structure id is given, cname is optional.
+        cname: str
+            cname's character_id will be used in searching structure_id. 
+            If supplied, this character needs to have docking access to structure.
 
     Returns:
         A list of integers for type_ids. Result is not sorted and the order has no actual meaning.
@@ -602,14 +587,8 @@ def get_structure_types(structure_name_or_id: Union[str, int], cname: str) -> Li
             f"Argument structure_name_or_id should be str or int, not {type(structure_name_or_id)}."
         )
 
-    if not sid and not cname:
-        # if s_id not given, cname is required for search_structure_id api
-        raise ValueError(
-            f'Require parameter "cname" for authentication when structure name is given instead of structure id.'
-        )
-
     if not sid:
-        sid = search_structure_id(structure_name_or_id, cname)
+        sid = search_structure_id(structure_name_or_id, cname=cname)
 
     resp = ESIDB.cursor.execute(
         f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}"
