@@ -17,8 +17,8 @@ from .validate_jwt import validate_eve_jwt
 logger = logging.getLogger(__name__)
 
 
-def print_auth_url(client_id, code_challenge=None, **kwd):
-    """Prints the URL to redirect users to.
+def generate_auth_url(client_id, code_challenge=None, **kwd):
+    """Generates the URL for users to visit.
 
     Args:
         client_id: The client ID of an EVE SSO application
@@ -92,8 +92,15 @@ def handle_sso_token_response(sso_response: requests.Response):
         data["retrieve_time"] = int(time.time())
 
         jwt = validate_eve_jwt(access_token)
+
+        # Find character name
         character_name = jwt["name"]
         data["character_name"] = character_name
+
+        # Find character_id
+        sub = jwt["sub"]
+        character_id = int(sub.split(":")[-1])
+        data["character_id"] = character_id
 
         return data
     else:

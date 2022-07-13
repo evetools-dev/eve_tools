@@ -22,6 +22,7 @@ class Token:
     retrieve_time: str
     refresh_token: str
     character_name: str
+    character_id: int
     clientId: str
 
 
@@ -108,7 +109,7 @@ class ESITokens(object):
             # character_name and clientId field should not change.
             self._save_flag = True
 
-    def generate(self, print_info: bool = False) -> None:
+    def generate(self) -> Token:
         """Generates new token for the Application.
 
         Generates a new Token instance that could be used for authorized request.
@@ -127,28 +128,33 @@ class ESITokens(object):
             clientID=self.clientId,
             scope=self.scope,
             callbackURL=self.callbackURL,
-            print_=print_info,
         )
 
+        # When user repeatedly calling generate()...
         old_token = None
         for token_ in self.tokens:
-            if token_.character_name == new_token_dict["character_name"]:
+            if token_.character_id == new_token_dict["character_id"]:
                 old_token = token_
                 break
+
+        self._save_flag = True
+
         if old_token:
             old_token.access_token = new_token_dict["access_token"]
             old_token.retrieve_time = new_token_dict["retrieve_time"]
             old_token.refresh_token = new_token_dict["refresh_token"]
+            return old_token
         else:
             new_token = Token(
                 new_token_dict["access_token"],
                 new_token_dict["retrieve_time"],
                 new_token_dict["refresh_token"],
                 new_token_dict["character_name"],
+                new_token_dict["character_id"],
                 self.clientId,
             )
             self.tokens.append(new_token)
-        self._save_flag = True
+            return new_token
 
     def save(self, **options) -> None:
         """Saves tokens to a local file.
@@ -236,7 +242,15 @@ class ESITokens(object):
 
         tokens = all_tokens[self.clientId]
         for token_ in tokens:
-            self.tokens.append(Token(**token_))  # dictionary unpacking
+            # More robust when ADDING (removing not considered) new attr to Token but local token.json not updated.
+            _append = True
+            for attr in Token.__annotations__:
+                if attr not in token_:
+                    _append = False
+                    break
+            
+            if _append:
+                self.tokens.append(Token(**token_))  # dictionary unpacking
 
     def __getitem__(self, cname: str) -> Token:
         """Gets the Token with cname.
