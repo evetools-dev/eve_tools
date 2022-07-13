@@ -53,8 +53,9 @@ def hauling(
 
     # Retrieve volume history of the structure
     type_ids = get_structure_types(to_structure, cname)
+    structure_id = search_structure_id(to_structure)
     structure_volume = get_market_history(
-        search_structure_region_id(to_structure, cname), type_ids, reduce_volume
+        search_structure_region_id(structure_id), type_ids, reduce_volume
     )
 
     # type_id -> name

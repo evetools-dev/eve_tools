@@ -2,7 +2,6 @@ from typing import Callable
 import os
 import yaml
 
-from eve_tools import search_id, search_structure_id
 from eve_tools import api_cache
 from eve_tools.data.cache import hash_key, make_cache_key
 
@@ -17,9 +16,6 @@ class TestInit:
 
     cname = global_config.get("cname")
     structure_name = global_config.get("structure_name")
-
-    cid = search_id(cname, "character")
-    sid = search_structure_id(structure_name, cname)
 
 
 def request_from_ESI(esi_api: Callable, *args, **kwd):

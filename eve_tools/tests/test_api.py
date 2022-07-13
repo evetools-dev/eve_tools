@@ -3,24 +3,15 @@ import time
 import unittest
 
 
-from eve_tools.api.market import (
-    get_market_history,
-    get_region_market,
-    get_region_types,
-    get_station_market,
-    get_structure_market,
-    get_structure_types,
-    get_type_history,
-)
+from eve_tools.api import *
+from eve_tools.api.search import InvType, SolarSystem, Station, Structure
 from eve_tools.api.utils import reduce_volume
 from .utils import TestInit, request_from_ESI
 
 
 class TestMarket(unittest.TestCase, TestInit):
     def test_get_structure_types(self):
-        resp = request_from_ESI(
-            get_structure_types, self.structure_name, self.cname
-        )
+        resp = request_from_ESI(get_structure_types, self.structure_name, self.cname)
         resp_cache = get_structure_types(self.structure_name, self.cname)
 
         # Test: api returns correct value
@@ -30,9 +21,8 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertIn(1405, resp)  # 1405: inertial stabilizer
 
         # Test: if sid given, cname is optional
-        resp_sid = request_from_ESI(
-            get_structure_types, self.sid, "some weird cname"
-        )
+        sid = search_structure_id(self.structure_name, self.cname)
+        resp_sid = request_from_ESI(get_structure_types, sid, "some weird cname")
         self.assertEqual(set(resp), set(resp_sid))
 
         # Test: cache returns correctly
@@ -231,12 +221,102 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertTrue((resp["region_id"] == resp["region_id"][0]).all())
             self.assertIn(1405, resp["type_id"].values)  # 1405: inertial stabilizer
 
-        # Test: if sid given, cname is optional
-        resp_sid = request_from_ESI(
-            get_structure_market, self.sid, "some weird cname"
-        )
+        # Test: cname is optional
+        sid = search_structure_id(self.structure_name, self.cname)
+        resp_sid = request_from_ESI(get_structure_market, sid, "some weird cname")
         self.assertEqual(set(resp), set(resp_sid))
 
         # Test: cache returns correctly
         self.assertEqual(len(resp), len(resp_cache))
         self.assertEqual(set(resp), set(resp_cache))
+
+
+class TestSearch(unittest.TestCase, TestInit):
+    def test_search_id(self):
+        """Only test categories not defined in other search functions."""
+        # Test: invalid category
+        with self.assertRaises(ValueError):
+            request_from_ESI(search_id, "abc", "category not exist")
+        
+        # Test: no record
+        with self.assertRaises(ValueError):
+            request_from_ESI(search_id, "Hanbie Seri", "character")
+
+        # Test: search character_id
+        resp = request_from_ESI(search_id, "Hanbie Serine", "character")
+        resp_cache = search_id("Hanbie Serine", "character")
+        self.assertEqual(resp, 2116658732)
+        self.assertEqual(resp, resp_cache)
+
+        # Test: search alliance_id
+        resp = request_from_ESI(search_id, "Fraternity.", "alliance")
+        resp_cache = search_id("Fraternity.", "alliance")
+        self.assertEqual(resp, 99003581)
+        self.assertEqual(resp, resp_cache)
+
+    def test_search_structure_id(self):
+        resp = request_from_ESI(search_structure_id, self.structure_name, self.cname)
+        resp_cache = search_structure_id(self.structure_name, self.cname)
+        self.assertEqual(resp, resp_cache)
+        self.assertGreater(resp, 1000000000000)
+    
+    def test_search_structure(self):
+        sid = search_structure_id(self.structure_name, self.cname)
+        resp: Structure = request_from_ESI(search_structure, sid)
+        resp_cache = search_structure(sid)
+        self.assertEqual(resp, resp_cache)
+
+    def test_search_station(self):
+        resp: Station = request_from_ESI(search_station, 60000016)
+        resp_cache = search_station(60000016)
+
+        self.assertIsInstance(resp, Station)
+        self.assertEqual(
+            resp.name, "Tasabeshi VIII - Moon 13 - CBD Corporation Storage"
+        )
+        self.assertEqual(resp.region_id, 10000033)
+        self.assertEqual(resp, resp_cache)
+
+    def test_search_station_region_id(self):
+        resp = request_from_ESI(search_station_region_id, 60000004)
+        resp_cache = search_station_region_id(60000004)
+        self.assertEqual(resp, 10000033)
+        self.assertEqual(resp, resp_cache)
+        with self.assertRaises(ValueError):
+            request_from_ESI(search_station_region_id, 123456789)
+
+    def test_search_region_id(self):
+        resp = request_from_ESI(search_region_id, "The Forge")
+        resp_cache = search_region_id("The Forge")
+
+        self.assertEqual(resp, 10000002)
+        self.assertEqual(resp, resp_cache)
+
+        with self.assertRaises(ValueError):
+            request_from_ESI(search_region_id, "region not exists")
+
+    def test_search_system(self):
+        resp: SolarSystem = request_from_ESI(search_system, 30000142)
+        resp_cache = search_system(30000142)
+        self.assertEqual(resp.name, "Jita")
+        self.assertEqual(resp.region_id, 10000002)
+        self.assertEqual(resp, resp_cache)
+
+    def test_search_system_id(self):
+        resp = request_from_ESI(search_system_id, "Jita")
+        resp_cache = search_system_id("Jita")
+        self.assertEqual(resp, 30000142)
+        self.assertEqual(resp, resp_cache)
+
+    def test_search_type(self):
+        resp: InvType = request_from_ESI(search_type, 12005)
+        resp_cache = search_type(12005)
+        self.assertEqual(resp.type_name, "Ishtar")
+        self.assertTrue(resp.published)
+        self.assertEqual(resp, resp_cache)
+
+    def test_search_type_id(self):
+        resp = request_from_ESI(search_type_id, "Ishtar")
+        resp_cache = search_type_id("Ishtar")
+        self.assertEqual(resp, 12005)
+        self.assertEqual(resp, resp_cache)

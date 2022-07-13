@@ -1,18 +1,14 @@
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime
-from email.utils import parsedate
-import logging
 import aiohttp
-from typing import Coroutine, Optional, Union, List
+from dataclasses import dataclass
+import logging
+from typing import Optional, Union, List
 
-from .token import ESITokens
+from .token import ESITokens, Token
 from .metadata import ESIMetadata, ESIRequest
 from .application import ESIApplications, Application
-from .utils import ESIRequestError
+from .utils import ESIRequestError, _SessionRecord, _session_recorder
 
-# Assume python int has sufficient precision
-# Assume each path is either GET or POST, not both
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +26,8 @@ class ESIResponse:
             Request's method.
         headers: dict
             A case insensitive dictionary with HTTP headers of response.
+        request_info: ESIRequest
+            A copy for request info with url, params, headers used in request.
         data: dict | List | int
             A json serialized response body, a dictionary or a list or an int.
         expires: str | None
@@ -39,8 +37,12 @@ class ESIResponse:
     status: int
     method: str
     headers: dict
+    request_info: ESIRequest
     data: Optional[Union[dict, List, int]]
     expires: Optional[str] = None
+
+    def __len__(self):
+        return len(self.data)
 
 
 class ESI(object):
@@ -52,7 +54,7 @@ class ESI(object):
     metaurl = "https://esi.evetech.net/latest"
     default_callback = "https://localhost/callback/"
 
-    def __init__(self, **kwd):
+    def __init__(self):
 
         self.apps = ESIApplications()
         self._metadata = ESIMetadata()
@@ -64,14 +66,14 @@ class ESI(object):
         ### Exit flag
         self._app_changed = False
 
-        ### API session
-        self._api_session = False
-        self._api_session_record = None
+        ### Session record
+        self._record_session = True  # default recording
+        self._record: _SessionRecord = _SessionRecord()
 
+    @_session_recorder(fields="timer")
     def get(
         self,
         key: str,
-        generate_token: Optional[bool] = True,
         async_loop: Optional[List] = None,
         **kwd,
     ) -> Union[dict, List[dict]]:
@@ -89,9 +91,6 @@ class ESI(object):
             key: str
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
-            generate_token: bool
-                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
-                Default generating tokens.
             async_loop: List | None
                 A list of arguments that this method would loop through in order and execute asynchronously.
                 If async_loop is not given, this method would perform similar to a requests.get method.
@@ -105,20 +104,25 @@ class ESI(object):
                 EVE ESI does not require headers info, but supplying with User-Agent, etc., is recommended.
             kwd.cname: str
                 A string of character name. Token with cname would be used for the request.
+            kwd.generate_token: bool
+                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
+                Default generating tokens.
 
         Returns:
             A dictionary or a list of dictionary, depends on async_loop argument.
 
+        Note:
+            If request needs character_id field and is an authenticated endpoint, character_id field is optional,
+            because authentication result contains the character_id of the authenticated character. 
+
         Example:
-        >>> from src.ESI import ESIClient   # ESIClient is an instance instantiated upon import
+        >>> from eve_tools import ESIClient   # ESIClient is an instance instantiated upon import
         >>> data = ESIClient.get("/markets/structures/{structure_id}/", structure_id=1035466617946)     # Single synchronous request
         >>> # Asynchronously request 100 pages (1000 orders per page) of buy orders of The Forge (region of Jita)
         >>> data = ESIClient.get("/markets/{region_id}/orders/", async_loop=["page"], region_id=1000002, page=range(1, 101), order_type="buy")
         """
         if not async_loop:
-            return self._event_loop.run_until_complete(
-                self.request("get", key, generate_token, **kwd)
-            )
+            return self._event_loop.run_until_complete(self.request("get", key, **kwd))
 
         # Not sure which is better
         # creating coroutines, gathering them, then run_until_complete the coro with gather, or
@@ -140,11 +144,7 @@ class ESI(object):
             >>>             do something
             """
             if not async_loop:
-                tasks.append(
-                    asyncio.ensure_future(
-                        self.request("get", key, generate_token, **kwd)
-                    )
-                )
+                tasks.append(asyncio.ensure_future(self.request("get", key, **kwd)))
                 return
             async_loop_cpy = async_loop[:]
             curr = async_loop_cpy.pop(0)
@@ -164,11 +164,11 @@ class ESI(object):
         ret = []
         for task in tasks:
             # each task.result() is a ESIResponse instance
-            ret.append(task.result())  # well, let's forget about memory
-
+            ret.append(task.result())
         return ret
 
-    def head(self, key: str, generate_token: Optional[bool] = True, **kwd) -> dict:
+    @_session_recorder(fields="timer")
+    def head(self, key: str, **kwd) -> dict:
         """Request HEAD an ESI API.
 
         Checks input parameters and send a synchronous HEAD request to ESI server.
@@ -180,9 +180,6 @@ class ESI(object):
             key: str
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
-            generate_token: bool
-                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
-                Default generating tokens.
             kwd.params: dict
                 A dictionary containing parameters for the request.
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
@@ -192,27 +189,27 @@ class ESI(object):
                 EVE ESI does not require headers info, but supplying with User-Agent, etc., is recommended.
             kwd.cname: str
                 A string of character name. Token with cname would be used for the request.
+            kwd.generate_token: bool
+                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
+                Default generating tokens.
 
         Returns:
             A dictionary containing headers from ESI request.
 
         Example:
-        >>> from src.ESI import ESIClient       # ESIClient is an instance instantiated upon import
+        >>> from eve_tools import ESIClient       # ESIClient is an instance instantiated upon import
         >>> headers = ESIClient.head("/markets/structures/{structure_id}/", structure_id=sid, page=1)
         >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
         """
-        return self._event_loop.run_until_complete(
-            self.request("head", key, generate_token, **kwd)
-        )
+        return self._event_loop.run_until_complete(self.request("head", key, **kwd))
 
-    async def request(
-        self, method: str, key: str, generate_token: Optional[bool] = True, **kwd
-    ) -> dict:
+    async def request(self, method: str, key: str, **kwd) -> dict:
         """Sends one request to an ESI API.
 
         Checks input parameters and send one asynchronous request to ESI server.
         Request method is checked against the key to see if the API supports the given method.
-        Parameters are enforced similar to the "Try it out" function on the ESI website.
+        Parameters are enforced similar to the "Try it out" function on the ESI website,
+        EXCEPT for character_id in authenticated endpoint.
         Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
 
         Args:
@@ -221,9 +218,6 @@ class ESI(object):
             key: str
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
-            generate_token: bool
-                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
-                Default generating tokens if not exists.
             kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
 
         Returns:
@@ -249,6 +243,7 @@ class ESI(object):
         api_request.params.update(params)
 
         headers = kwd.get("headers", {})
+        generate_token = kwd.get("generate_token", True)
         # if has security and has no Authorization field, get auth token.
         if api_request.security and not headers.get("Authorization"):
             app = self.apps.search_scope(" ".join(api_request.security))
@@ -256,8 +251,11 @@ class ESI(object):
                 cname = kwd.pop("cname", "any")
                 if generate_token and not tokens.exist(cname):
                     logger.debug("Generate token for request: %s %s", method, key)
-                    tokens.generate()
-                headers.update(self._get_auth_headers(tokens, cname))
+                    token = tokens.generate()
+                else:
+                    token = tokens[cname]
+                api_request.token = token
+                headers.update(self._get_auth_headers(token))
 
         api_request.headers.update(headers)
 
@@ -271,34 +269,8 @@ class ESI(object):
 
         return res
 
-    def _api_session_recorder(_coro: Coroutine):
-        """Records useful info from ESIResponse that can be fed to other objects."""
-
-        async def _api_session_recorder_wrapped(_self, *args, **kwd):
-            resp: ESIResponse = await _coro(
-                _self, *args, **kwd
-            )  # this _self should be an instance of ESI
-
-            if not _self._api_session:
-                return resp
-
-            expires = resp.expires
-
-            if not _self._api_session_record:
-                _self._api_session_record = expires
-
-            # Use the earliest expire
-            if expires:
-                expires_dt = datetime(*parsedate(expires)[:6])
-                record_dt = datetime(*parsedate(_self._api_session_record)[:6])
-                if expires_dt < record_dt:
-                    _self._api_session_record = expires
-            return resp
-
-        return _api_session_recorder_wrapped
-
     @ESIRequestError(attempts=3)
-    @_api_session_recorder
+    @_session_recorder(exclude="timer")
     async def async_request(self, api_request: ESIRequest, method: str) -> dict:
         """Asynchronous requests to ESI API.
 
@@ -327,11 +299,12 @@ class ESI(object):
             ) as req:
                 data = await req.json()
                 resp = ESIResponse(
-                    req.status,
-                    req.method,
-                    dict(req.headers),
-                    data,
-                    req.headers.get("Expires"),
+                    status=req.status,
+                    method=req.method,
+                    headers=dict(req.headers),
+                    request_info=api_request,
+                    data=data,
+                    expires=req.headers.get("Expires"),
                 )
 
         elif method == "head":
@@ -339,11 +312,12 @@ class ESI(object):
                 api_request.url, params=api_request.params, headers=api_request.headers
             ) as req:
                 resp = ESIResponse(
-                    req.status,
-                    req.method,
-                    dict(req.headers),
-                    None,
-                    req.headers.get("Expires"),
+                    status=req.status,
+                    method=req.method,
+                    headers=dict(req.headers),
+                    request_info=api_request,
+                    data=None,
+                    expires=req.headers.get("Expires"),
                 )
 
         return resp
@@ -391,11 +365,9 @@ class ESI(object):
         with ESITokens(new_app) as token:
             token.generate()
 
-    def _get_auth_headers(
-        self, tokens: ESITokens, cname: Optional[str] = "any"
-    ) -> dict:
+    def _get_auth_headers(self, token: Token) -> dict:
         # Read from local token file and append to request headers.
-        access_token = tokens[cname].access_token
+        access_token = token.access_token
         auth_headers = {"Authorization": "Bearer {}".format(access_token)}
         return auth_headers
 
@@ -429,17 +401,18 @@ class ESI(object):
                 A struct holding request info for an API request.
                 Necessary info (url, params, headers) is filled in according to metadata and some facts.
             keywords: dict
-                A dictionary provided by user, containing headers, params, and other necessary fields for the API.
+                Kwd argument provided by user, containing headers, params, and other necessary fields for the API.
                 Missing keywords (such as character_id) raises errors.
 
         Facts:
             _in: path
                 1. Param.required = True
-                2. Appears as {Param.name} in url
+                2. Appears as {Param.name} in url: https://.../characters/{character_id}/orders/
                 3. Pass in with kwd argument, not params, headers, or data
                 4. Param.default is None
             _in: query
                 1. Pass in with either kwd or params, not headers or data
+                2. Appears as ?query=value in url: https://.../?datasource=tranquility
             _in: header
                 1. Request token has been updated to headers before calling this function
                 2. ESI marks "token" param as optional
@@ -449,11 +422,15 @@ class ESI(object):
         query_params = {}  # params for url/?{key1}={value1}?{key2}={value2}...
         headers = keywords.pop("headers", {})
 
+        cid = 0
+        if api_request.token is not None:
+            cid = api_request.token.character_id
+
         for api_param_ in api_request.parameters:
             if api_param_._in == "path":
                 key = api_param_.name
                 value = self._parse_request_keywords_in_path(
-                    keywords, key, api_param_.dtype
+                    keywords, key, api_param_.dtype, cid
                 )
                 path_params.update({key: value})
                 # dict unpacking later
@@ -483,10 +460,15 @@ class ESI(object):
         api_request.url = self.metaurl + url  # urljoin is difficult to deal with...
 
     @staticmethod
-    def _parse_request_keywords_in_path(where: dict, key: str, dtype: str) -> str:
+    def _parse_request_keywords_in_path(
+        where: dict, key: str, dtype: str, cid: int = 0
+    ) -> str:
         # dtype is not checked yet. Checking it needs to parse "schema" field and integerate into "dtype",
         # and needs to find a way to fit user input to the dtype field.
         # No need to check Param.required because Param._in == "path" => Param.required == True
+        if key == "character_id" and cid > 0 and "character_id" not in where:
+            # Prioritizes user input character_id
+            return cid
         value = where.pop(key, None)
         if not value:
             raise KeyError(f'Missing key "{key}" in keywords.')
@@ -536,16 +518,14 @@ class ESI(object):
                 self._async_session._connector.close()
             self._async_session._connector = None
 
-    def _start_api_session(self):
-        """Starts recording useful ESIResponse from API calls."""
-        self._api_session = True
-        self._api_session_record = None
+    def _start_record(self):
+        """Starts recording useful response info."""
+        self._record_session = True
 
-    def _end_api_session(self):
-        """Ends recording ESIResponse from API calls."""
-        self._api_session = False
+    def _stop_record(self):
+        """Stops recording ESIResponse."""
+        self._record_session = False
 
-    def _clear_api_record(self):
-        """Clears _api_session_record entry of the instance."""
-        self._api_session_record = None
-        self._api_session = False
+    def _clear_record(self, field: Optional[str] = None):
+        """Clears record of the instance."""
+        self._record.clear(field)
