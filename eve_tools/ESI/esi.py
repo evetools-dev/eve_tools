@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import logging
 from typing import Optional, Union, List
 
-from .token import ESITokens
+from .token import ESITokens, Token
 from .metadata import ESIMetadata, ESIRequest
 from .application import ESIApplications, Application
 from .utils import ESIRequestError, _SessionRecord, _session_recorder
@@ -111,6 +111,10 @@ class ESI(object):
         Returns:
             A dictionary or a list of dictionary, depends on async_loop argument.
 
+        Note:
+            If request needs character_id field and is an authenticated endpoint, character_id field is optional,
+            because authentication result contains the character_id of the authenticated character. 
+
         Example:
         >>> from eve_tools import ESIClient   # ESIClient is an instance instantiated upon import
         >>> data = ESIClient.get("/markets/structures/{structure_id}/", structure_id=1035466617946)     # Single synchronous request
@@ -204,7 +208,8 @@ class ESI(object):
 
         Checks input parameters and send one asynchronous request to ESI server.
         Request method is checked against the key to see if the API supports the given method.
-        Parameters are enforced similar to the "Try it out" function on the ESI website.
+        Parameters are enforced similar to the "Try it out" function on the ESI website,
+        EXCEPT for character_id in authenticated endpoint.
         Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
 
         Args:
@@ -246,8 +251,11 @@ class ESI(object):
                 cname = kwd.pop("cname", "any")
                 if generate_token and not tokens.exist(cname):
                     logger.debug("Generate token for request: %s %s", method, key)
-                    tokens.generate()
-                headers.update(self._get_auth_headers(tokens, cname))
+                    token = tokens.generate()
+                else:
+                    token = tokens[cname]
+                api_request.token = token
+                headers.update(self._get_auth_headers(token))
 
         api_request.headers.update(headers)
 
@@ -357,11 +365,9 @@ class ESI(object):
         with ESITokens(new_app) as token:
             token.generate()
 
-    def _get_auth_headers(
-        self, tokens: ESITokens, cname: Optional[str] = "any"
-    ) -> dict:
+    def _get_auth_headers(self, token: Token) -> dict:
         # Read from local token file and append to request headers.
-        access_token = tokens[cname].access_token
+        access_token = token.access_token
         auth_headers = {"Authorization": "Bearer {}".format(access_token)}
         return auth_headers
 
@@ -395,17 +401,18 @@ class ESI(object):
                 A struct holding request info for an API request.
                 Necessary info (url, params, headers) is filled in according to metadata and some facts.
             keywords: dict
-                A dictionary provided by user, containing headers, params, and other necessary fields for the API.
+                Kwd argument provided by user, containing headers, params, and other necessary fields for the API.
                 Missing keywords (such as character_id) raises errors.
 
         Facts:
             _in: path
                 1. Param.required = True
-                2. Appears as {Param.name} in url
+                2. Appears as {Param.name} in url: https://.../characters/{character_id}/orders/
                 3. Pass in with kwd argument, not params, headers, or data
                 4. Param.default is None
             _in: query
                 1. Pass in with either kwd or params, not headers or data
+                2. Appears as ?query=value in url: https://.../?datasource=tranquility
             _in: header
                 1. Request token has been updated to headers before calling this function
                 2. ESI marks "token" param as optional
@@ -415,11 +422,15 @@ class ESI(object):
         query_params = {}  # params for url/?{key1}={value1}?{key2}={value2}...
         headers = keywords.pop("headers", {})
 
+        cid = 0
+        if api_request.token is not None:
+            cid = api_request.token.character_id
+
         for api_param_ in api_request.parameters:
             if api_param_._in == "path":
                 key = api_param_.name
                 value = self._parse_request_keywords_in_path(
-                    keywords, key, api_param_.dtype
+                    keywords, key, api_param_.dtype, cid
                 )
                 path_params.update({key: value})
                 # dict unpacking later
@@ -449,10 +460,15 @@ class ESI(object):
         api_request.url = self.metaurl + url  # urljoin is difficult to deal with...
 
     @staticmethod
-    def _parse_request_keywords_in_path(where: dict, key: str, dtype: str) -> str:
+    def _parse_request_keywords_in_path(
+        where: dict, key: str, dtype: str, cid: int = 0
+    ) -> str:
         # dtype is not checked yet. Checking it needs to parse "schema" field and integerate into "dtype",
         # and needs to find a way to fit user input to the dtype field.
         # No need to check Param.required because Param._in == "path" => Param.required == True
+        if key == "character_id" and cid > 0 and "character_id" not in where:
+            # Prioritizes user input character_id
+            return cid
         value = where.pop(key, None)
         if not value:
             raise KeyError(f'Missing key "{key}" in keywords.')

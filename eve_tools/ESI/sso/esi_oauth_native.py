@@ -3,16 +3,17 @@ import hashlib
 import secrets
 from typing import Any
 
-from .shared_flow import print_auth_url
-from .shared_flow import send_token_request
-from .shared_flow import handle_sso_token_response
+from .shared_flow import (
+    generate_auth_url,
+    send_token_request,
+    handle_sso_token_response,
+)
 
 
 def esi_oauth_local(**kwd) -> Any:
     """A local implementation of the OAuth 2.0 native flow.
-	Source: https://github.com/esi/esi-docs/blob/master/examples/python/sso/esi_oauth_native.py"""
+    Source: https://github.com/esi/esi-docs/blob/master/examples/python/sso/esi_oauth_native.py"""
 
-    print_ = kwd.get("print_", False)  # flag for verbose (print how many info)
     callbackURL = kwd.get("callbackURL", "https://localhost/callback/")
 
     if "clientID" not in kwd.keys() or "scope" not in kwd.keys():
@@ -29,7 +30,7 @@ def esi_oauth_local(**kwd) -> Any:
     d = m.digest()
     code_challenge = base64.urlsafe_b64encode(d).decode().replace("=", "")
 
-    print_auth_url(
+    generate_auth_url(
         client_id,
         code_challenge,
         scope=scope,

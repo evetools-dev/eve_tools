@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from eve_tools.config import METADATA_PATH
 
 from .param import ESIParams, Param
+from .token import Token
 
 
 @dataclass
@@ -28,14 +29,16 @@ class ESIRequest:
         security: List[str]
             A list of str representing authentication scopes.
             API request with <= 1 scopes is supported.
-        url: str, default None
+        url: Optional[str]
             A string to request to. Contains the base url.
-        headers: dict, default empty dict
+        headers: Optional[dict]
             A dictionary containing request headers,
             usually contains "Authorization" field, or other user defined fields.
-        params: dict, default empty dict
+        params: Optional[dict]
             A dictionary containing params for the url.
             Contains necessary info for ESI, such as {"character_id": 1234555}
+        token: Optional[Token]
+            A Token instance used for this request. Default None if request is unauthenticated.
     """
 
     request_key: str  # paths[key]
@@ -47,6 +50,8 @@ class ESIRequest:
     url: Optional[str] = None
     headers: Optional[dict] = field(default_factory=dict)
     params: Optional[dict] = field(default_factory=dict)
+
+    token: Optional[Token] = None
 
 
 class ESIMetadata(object):
