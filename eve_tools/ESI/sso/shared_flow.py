@@ -6,11 +6,13 @@ found here are used by the OAuth 2.0 examples contained in this project.
 
 Source: https://github.com/esi/esi-docs/blob/master/examples/python/sso/shared_flow.py
 """
+import apt
 import logging
 import urllib
 import requests
 import pyperclip as pc
 import time
+import sys
 
 from .validate_jwt import validate_eve_jwt
 
@@ -46,7 +48,24 @@ def generate_auth_url(client_id, code_challenge=None, **kwd):
     full_auth_url = "{}?{}".format(base_auth_url, string_params)
 
     # copy auth url to clipboard
-    pc.copy(full_auth_url)
+    try:
+        pc.copy(full_auth_url)
+    except pc.PyperclipException as pc_exc:
+        if sys.platform == "linux":
+            # Pyperclip needs additional dependency on Linux.
+            # Either apt-get install xclip or xsel, 
+            # or pip install gtk or PyQt4. 
+            # xclip tested to be working under Linux penguin.
+            db_packages = apt.Cache()
+            db_xclip = db_packages.get("xclip", None)
+            db_xsel = db_packages.get("xsel", None)
+            if db_xclip and db_xsel:  # cache include "xclip"/"xsel" entry
+                if not db_xclip.is_installed and not db_xsel.is_installed:
+                    # If both not installed
+                    logger.error(
+                        "Pyperclip NotImplementedError: needs copy/paste mechanism for Linux: xclip or xsel")
+                    raise pc.PyperclipException("With linux, xclip or xsel is necessary. Use sudo apt-get xclip or sudo apt-get xsel to install one of them.") from pc_exc
+        raise
 
 
 def send_token_request(form_values, add_headers={}):
