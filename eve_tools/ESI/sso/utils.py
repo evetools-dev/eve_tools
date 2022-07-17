@@ -1,4 +1,3 @@
-import apt
 import logging
 import pyperclip as pc
 import sys
@@ -42,7 +41,18 @@ def to_clipboard(msg: str) -> None:
 
 
 def debian_package_check(name: str) -> bool:
-    """Checks if a debian package is installed."""
+    """Checks if a debian package is installed.
+    Should only be called under Linux system."""
+    if sys.platform != "linux":
+        raise NotImplemented
+    try:
+        import apt
+    except ImportError as exc:
+        if not debian_package_install("python3-apt") and not debian_package_install("python-apt"):
+            raise SystemExit("Missing package apt. Install using sudo apt-get install python3-apt or sudo apt-get install python-apt.") from exc
+        else:
+            # python3-apt or python-apt installed
+            import apt
     db_packages = apt.Cache()
     package = db_packages.get(name)
     return package is not None and package.is_installed
