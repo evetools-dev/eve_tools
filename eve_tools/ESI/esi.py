@@ -32,6 +32,10 @@ class ESIResponse:
             A json serialized response body, a dictionary or a list or an int.
         expires: str | None
             A RFC7231 formatted datetime string, if any.
+        error_remain: int
+            Errors the user can make in the time window.
+        error_reset: int
+            Time window left, in seconds. After this many seconds, error_remain will be refreshed to 100.
     """
 
     status: int
@@ -40,6 +44,8 @@ class ESIResponse:
     request_info: ESIRequest
     data: Optional[Union[dict, List, int]]
     expires: Optional[str] = None
+    error_remain: Optional[int] = 100
+    error_reset: Optional[int] = 60
 
     def __len__(self):
         return len(self.data)
@@ -95,6 +101,12 @@ class ESI(object):
                 A list of arguments that this method would loop through in order and execute asynchronously.
                 If async_loop is not given, this method would perform similar to a requests.get method.
                 If async_loop is given, this method requires corresponding kwd arguments exist and are iterable.
+            kwd.raises: bool | None
+                Raises ClientResponseError or not. One of [None, True, False].
+                If async_loop not given, default True. If given, default None.
+                None: raises when "x-esi-error-limit-remain" <= 5, return None when > 5.
+                True: always raises when no attempts left (1 attempt on code 400, 404, 420).
+                False: never raises, return None on error when no attempts left.
             kwd.params: dict
                 A dictionary containing parameters for the request.
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
@@ -113,7 +125,7 @@ class ESI(object):
 
         Note:
             If request needs character_id field and is an authenticated endpoint, character_id field is optional,
-            because authentication result contains the character_id of the authenticated character. 
+            because authentication result contains the character_id of the authenticated character.
 
         Example:
         >>> from eve_tools import ESIClient   # ESIClient is an instance instantiated upon import
@@ -121,8 +133,19 @@ class ESI(object):
         >>> # Asynchronously request 100 pages (1000 orders per page) of buy orders of The Forge (region of Jita)
         >>> data = ESIClient.get("/markets/{region_id}/orders/", async_loop=["page"], region_id=1000002, page=range(1, 101), order_type="buy")
         """
+        if kwd.get("raises", "not given") == "not given":
+            # uses default raises
+            if async_loop:
+                raises = None
+            else:
+                raises = True
+        else:
+            raises = kwd.pop("raises")
+
         if not async_loop:
-            return self._event_loop.run_until_complete(self.request("get", key, **kwd))
+            return self._event_loop.run_until_complete(
+                self.request("get", key, raises=raises, **kwd)
+            )
 
         # Not sure which is better
         # creating coroutines, gathering them, then run_until_complete the coro with gather, or
@@ -144,7 +167,11 @@ class ESI(object):
             >>>             do something
             """
             if not async_loop:
-                tasks.append(asyncio.ensure_future(self.request("get", key, **kwd)))
+                tasks.append(
+                    asyncio.ensure_future(
+                        self.request("get", key, raises=raises, **kwd)
+                    )
+                )
                 return
             async_loop_cpy = async_loop[:]
             curr = async_loop_cpy.pop(0)
@@ -163,8 +190,10 @@ class ESI(object):
 
         ret = []
         for task in tasks:
-            # each task.result() is a ESIResponse instance
-            ret.append(task.result())
+            # each task.result() is a ESIResponse instance or None
+            result = task.result()
+            if result is not None:
+                ret.append(result)
         return ret
 
     @_session_recorder(fields="timer")
@@ -180,6 +209,11 @@ class ESI(object):
             key: str
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
+            kwd.raises: bool | None
+                Raises ClientResponseError or not. One of [None, True, False]. Default True.
+                None: raises when "x-esi-error-limit-remain" <= 5, return None when > 5.
+                True: always raises when no attempts left (1 attempt on code 400, 404, 420).
+                False: never raises, return None on error when no attempts left.
             kwd.params: dict
                 A dictionary containing parameters for the request.
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
@@ -201,7 +235,10 @@ class ESI(object):
         >>> headers = ESIClient.head("/markets/structures/{structure_id}/", structure_id=sid, page=1)
         >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
         """
-        return self._event_loop.run_until_complete(self.request("head", key, **kwd))
+        raises = kwd.get("raises", True)
+        return self._event_loop.run_until_complete(
+            self.request("head", key, raises=raises, **kwd)
+        )
 
     async def request(self, method: str, key: str, **kwd) -> dict:
         """Sends one request to an ESI API.
@@ -218,6 +255,11 @@ class ESI(object):
             key: str
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
+            kwd.raises: bool | None
+                Raises ClientResponseError or not. One of [None, True, False].
+                None: raises when "x-esi-error-limit-remain" <= 5, return None when > 5.
+                True: always raises when no attempts left (1 attempt on code 400, 404, 420).
+                False: never raises, return None on error when no attempts left.
             kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
 
         Returns:
@@ -259,17 +301,21 @@ class ESI(object):
 
         api_request.headers.update(headers)
 
+        raises = kwd.pop("raises", True)
+
         self._parse_request_keywords(api_request, kwd)
 
         # Using asyncio.run() is problematic because it creates a new event loop (or maybe other advanced/mysterious reasons?).
         # For my application (web request), aiohttp kind of like non-blocking accept in C,
         # where I need to use epoll (or select) to interrupt the blocking accept and do something else (like servering a client).
         # Something cool and slightly difficult to understand: https://stackoverflow.com/questions/49005651/how-does-asyncio-actually-work
-        res = await self.async_request(api_request, method)
+        # self.async_request = ESIRequestError(raises=raises)(self.async_request)
+        res = await ESIRequestError(raises=raises)(self.async_request)(
+            api_request, method
+        )
 
         return res
 
-    @ESIRequestError(attempts=3)
     @_session_recorder(exclude="timer")
     async def async_request(self, api_request: ESIRequest, method: str) -> dict:
         """Asynchronous requests to ESI API.
@@ -305,6 +351,8 @@ class ESI(object):
                     request_info=api_request,
                     data=data,
                     expires=req.headers.get("Expires"),
+                    error_remain=int(req.headers.get("x-esi-error-limit-remain")),
+                    error_reset=int(req.headers.get("x-esi-error-limit-reset")),
                 )
 
         elif method == "head":
@@ -318,6 +366,8 @@ class ESI(object):
                     request_info=api_request,
                     data=None,
                     expires=req.headers.get("Expires"),
+                    error_remain=int(req.headers.get("x-esi-error-limit-remain")),
+                    error_reset=int(req.headers.get("x-esi-error-limit-reset")),
                 )
 
         return resp

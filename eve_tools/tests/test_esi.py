@@ -1,9 +1,10 @@
 import unittest
+from aiohttp import ClientResponseError
 from datetime import datetime
 
 from eve_tools.ESI import ESIClient
 from eve_tools.ESI.metadata import ESIMetadata, ESIRequest
-from eve_tools.ESI.utils import _SessionRecord
+from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
 
 
 class TestESI(unittest.TestCase):
@@ -67,3 +68,107 @@ class TestESI(unittest.TestCase):
         self.assertEqual(expected_expires, ESIClient._record.expires)
         self.assertEqual(ESIClient._record.requests, 2)
         self.assertGreater(ESIClient._record.timer, 0.0001)
+
+    def test_request_raises(self):
+        # test ESI.request(..., raises=True/False/None)
+        # Make a correct request first
+        resp = ESIClient.get(
+            "/markets/{region_id}/history/", region_id=10000002, type_id=12005
+        )
+        self.assertEqual(resp.error_remain, ESIRequestError._global_error_remain[0])
+
+        # Test: raises = True
+        error_remain_before = ESIRequestError._global_error_remain[0]
+        with self.assertRaises(ClientResponseError):  # 404
+            ESIClient.get(
+                "/markets/{region_id}/history/",
+                region_id=10000002,
+                type_id=12007,
+                raises=True,
+            )
+        error_remain_after = ESIRequestError._global_error_remain[0]
+        self.assertEqual(error_remain_before - error_remain_after, 1)
+
+        with self.assertRaises(ClientResponseError):  # 404
+            ESIClient.get(
+                "/markets/{region_id}/history/",
+                async_loop=["type_id"],
+                region_id=10000002,
+                type_id=[12007, 123456789, 12005],
+                raises=True,
+            )
+
+        # Test: raises = False
+        error_remain_before = ESIRequestError._global_error_remain[0]
+        resp = ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000002,
+            type_id=12007,
+            raises=False,
+        )
+        error_remain_after = ESIRequestError._global_error_remain[0]
+        self.assertEqual(error_remain_before - error_remain_after, 1)
+        self.assertIsNone(resp)
+
+        resp = ESIClient.get(
+            "/markets/{region_id}/history/",
+            async_loop=["type_id"],
+            region_id=10000002,
+            type_id=[12007, 123456789, 12005],
+            raises=False,
+        )
+        self.assertEqual(len(resp), 1)
+
+        # Test: raises = None
+        ESIRequestError._global_error_remain[0] = 6
+        resp = ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000002,
+            type_id=12007,
+            raises=False,
+        )
+        self.assertIsNone(resp)
+        self.assertEqual(ESIRequestError._global_error_remain[0], 5)
+
+        with self.assertRaises(ClientResponseError):  # 404
+            ESIClient.get(
+                "/markets/{region_id}/history/",
+                region_id=10000002,
+                type_id=12007,
+                raises=True,
+            )
+        self.assertEqual(ESIRequestError._global_error_remain[0], 4)
+
+        # Test: default value
+        ESIClient.get(
+            "/markets/{region_id}/history/", region_id=10000002, type_id=12005
+        )  # correct request
+
+        if ESIRequestError._global_error_remain[0] > 6:
+            error_before = ESIRequestError._global_error_remain[0]
+            resp = ESIClient.get(
+                "/markets/{region_id}/history/",
+                async_loop=["type_id"],
+                region_id=10000002,
+                type_id=[123456789, 1234567, 1],
+            )
+            error_after = ESIRequestError._global_error_remain[0]
+            self.assertEqual(len(resp), 0)
+            self.assertEqual(error_before - error_after, 3)
+
+        ESIRequestError._global_error_remain[0] = 5
+        with self.assertRaises(ClientResponseError):  # 404
+            ESIClient.get(
+                "/markets/{region_id}/history/",
+                async_loop=["type_id"],
+                region_id=10000002,
+                type_id=[123456789, 1234567, 1],
+            )
+        # self.assertEqual(ESIRequestError._global_error_remain[0], 4)
+
+        with self.assertRaises(ClientResponseError):  # 404
+            ESIClient.head(
+                "/markets/{region_id}/history/",
+                region_id=10000002,
+                type_id=12007,
+            )

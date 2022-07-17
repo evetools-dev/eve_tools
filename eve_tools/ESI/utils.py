@@ -29,11 +29,12 @@ class ESIRequestError:
     """
 
     status_raise = [BAD_REQUEST, NOT_FOUND, ERROR_LIMITED]
+    _global_error_remain = [100]
 
     def __init__(
         self,
         attempts: Optional[int] = 3,
-        raises: Optional[bool] = True,
+        raises: Optional[bool] = None,
     ):
         self.attempts = attempts
         self.raises = raises
@@ -56,8 +57,9 @@ class ESIRequestError:
             ret = None
             while not success and attempts > 0:
                 try:
-                    ret = await func(_esi_self, *_args, **_kwd)
+                    ret = await func(_esi_self, *_args, **_kwd)  # ESIResponse instance
                     success = True
+                    self._global_error_remain[0] = ret.error_remain
                 except ClientResponseError as exc:
                     attempts -= 1
                     resp_code = exc.status
@@ -65,8 +67,20 @@ class ESIRequestError:
                         attempts = 0
                     logging.warning("%s | attempts left: %s", exc, attempts)
 
-                    if self.raises and attempts == 0:
+                    self._global_error_remain[0] -= 1
+
+                    # Raises if needed
+                    if self.raises is True and attempts == 0:
                         raise
+                    if self.raises is False and attempts == 0:
+                        return None
+                    if self.raises is None and attempts == 0:
+                        # Why 5?
+                        # If set to 0, ESI will always give 420 error, not being informative.
+                        if self._global_error_remain[0] <= 5:
+                            raise
+                        if self._global_error_remain[0] > 5:
+                            return None
             return ret
 
         return wrapped_retry
@@ -131,7 +145,7 @@ def _session_recorder(
     """
 
     def _session_recorder_wrapper(func: Union[Coroutine, Callable]):
-        # Using @functools.wrap cause errors
+        @wraps(func)
         async def _session_recorder_wrapped_async(_self, *args, **kwd):
             """Used when a coroutine function is decorated."""
             if not _self._record_session:
@@ -146,6 +160,7 @@ def _session_recorder(
 
             return resp
 
+        @wraps(func)
         def _session_recorder_wrapped_normal(_self, *args, **kwd):
             """Used when a normal callable function is decorated."""
             if not _self._record_session:
@@ -204,12 +219,8 @@ def _session_recorder(
             return
 
         if iscoroutinefunction(func):
-            _session_recorder_wrapped_async.__doc__ = func.__doc__
-            _session_recorder_wrapped_async.__name__ = func.__name__
             return _session_recorder_wrapped_async
         else:
-            _session_recorder_wrapped_normal.__doc__ = func.__doc__
-            _session_recorder_wrapped_normal.__name__ = func.__name__
             return _session_recorder_wrapped_normal
 
     if func is None:
