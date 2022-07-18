@@ -43,8 +43,10 @@ class SqliteCache(BaseCache):
     Expired entries are deleted in get().
     """
 
-    def __init__(self, esidb: ESIDBManager):
+    def __init__(self, esidb: ESIDBManager, table: str):
         self.c = esidb
+        self.table = table
+
         self._last_used = None  # used for testing
 
     def set(self, key, value, expires: Union[str, int] = None):
@@ -70,7 +72,7 @@ class SqliteCache(BaseCache):
 
         _h = hash_key(key)
         self.c.cursor.execute(
-            "INSERT OR REPLACE INTO api_cache VALUES(?,?,?)",
+            f"INSERT OR REPLACE INTO {self.table} VALUES(?,?,?)",
             (_h, pickle.dumps(value), expires),
         )
         self.c.conn.commit()
@@ -90,7 +92,7 @@ class SqliteCache(BaseCache):
 
         _h = hash_key(key)
         row = self.c.cursor.execute(
-            "SELECT * FROM api_cache WHERE key=?", [_h]
+            f"SELECT * FROM {self.table} WHERE key=?", (_h,)
         ).fetchone()
         if not row:
             return default
@@ -107,7 +109,7 @@ class SqliteCache(BaseCache):
     def evit(self, key):
         """Deletes cache entry with key. Useful in testing."""
         _h = hash_key(key)
-        self.c.cursor.execute("DELETE FROM api_cache WHERE key=?", [_h])
+        self.c.cursor.execute(f"DELETE FROM {self.table} WHERE key=?", (_h,))
         self.c.conn.commit()
 
 
