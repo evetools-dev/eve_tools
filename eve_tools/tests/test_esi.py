@@ -3,6 +3,7 @@ from datetime import datetime
 
 from eve_tools.ESI import ESIClient
 from eve_tools.ESI.metadata import ESIMetadata, ESIRequest
+from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
 from eve_tools.ESI.utils import _SessionRecord
 
 
@@ -67,3 +68,12 @@ class TestESI(unittest.TestCase):
         self.assertEqual(expected_expires, ESIClient._record.expires)
         self.assertEqual(ESIClient._record.requests, 2)
         self.assertGreater(ESIClient._record.timer, 0.0001)
+
+
+class TestSSO(unittest.TestCase):
+    def test_pc_copy(self):
+        # Testing check_call and other cmd are not necessary.
+        # Only to make sure we can copy/paste correctly.
+        msg = "ESI_TEST"
+        self.assertIsNone(to_clipboard(msg))
+        self.assertEqual(msg, read_clipboard())

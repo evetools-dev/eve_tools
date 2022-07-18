@@ -7,12 +7,12 @@ found here are used by the OAuth 2.0 examples contained in this project.
 Source: https://github.com/esi/esi-docs/blob/master/examples/python/sso/shared_flow.py
 """
 import logging
-import urllib
 import requests
-import pyperclip as pc
 import time
+import urllib
 
 from .validate_jwt import validate_eve_jwt
+from .utils import to_clipboard
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def generate_auth_url(client_id, code_challenge=None, **kwd):
     full_auth_url = "{}?{}".format(base_auth_url, string_params)
 
     # copy auth url to clipboard
-    pc.copy(full_auth_url)
+    to_clipboard(full_auth_url)
 
 
 def send_token_request(form_values, add_headers={}):
