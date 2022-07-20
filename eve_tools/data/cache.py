@@ -5,14 +5,14 @@ import logging
 import pickle
 from email.utils import parsedate
 from datetime import datetime, timedelta
-from typing import Union, Callable
+from typing import Coroutine, Union, Callable
 
 from eve_tools.data.db import ESIDBManager
 
 logger = logging.getLogger(__name__)
 
 
-def hash_key(key):
+def hash_key(key) -> str:
     """Default hashing function for a key. Using sha256 as hash function."""
     return "esi_cache-" + hashlib.sha256(pickle.dumps(key)).hexdigest()
 
@@ -21,7 +21,7 @@ class BaseCache(object):
     """Specifies BaseCache object used by other caching implimentation.
 
     Requires set and get method for api(s) to access the cache.
-    evit is useful for testing. The user should not be required to call evit
+    evict is useful for testing. The user should not be required to call evievictt
     to clear expired entries, which should be defined somewhere else.
     """
 
@@ -31,7 +31,7 @@ class BaseCache(object):
     def get(self, key, default):
         raise NotImplementedError
 
-    def evit(self, key):
+    def evict(self, key):
         raise NotImplementedError
 
 
@@ -43,8 +43,10 @@ class SqliteCache(BaseCache):
     Expired entries are deleted in get().
     """
 
-    def __init__(self, esidb: ESIDBManager):
+    def __init__(self, esidb: ESIDBManager, table: str):
         self.c = esidb
+        self.table = table
+
         self._last_used = None  # used for testing
 
     def set(self, key, value, expires: Union[str, int] = None):
@@ -70,10 +72,11 @@ class SqliteCache(BaseCache):
 
         _h = hash_key(key)
         self.c.cursor.execute(
-            "INSERT OR REPLACE INTO api_cache VALUES(?,?,?)",
+            f"INSERT OR REPLACE INTO {self.table} VALUES(?,?,?)",
             (_h, pickle.dumps(value), expires),
         )
         self.c.conn.commit()
+        logger.info("Cache entry set: %s", _h)
 
     def get(self, key, default=None):
         """Gets the value from cache.
@@ -85,42 +88,43 @@ class SqliteCache(BaseCache):
             key: An object returned from make_cache_key(), which is pickled and hashed using hash_key().
             default: If cache returns nothing, returns a default value. Default None.
         """
-        self.c.cursor.execute("DELETE FROM api_cache WHERE expires < DATE('now')")
+        self.c.cursor.execute(f"DELETE FROM {self.table} WHERE expires < DATE('now')")
         self.c.conn.commit()
 
         _h = hash_key(key)
         row = self.c.cursor.execute(
-            "SELECT * FROM api_cache WHERE key=?", [_h]
+            f"SELECT * FROM {self.table} WHERE key=?", (_h,)
         ).fetchone()
         if not row:
             return default
 
         expires = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
         if datetime.utcnow() > expires:
-            logging.debug("Cache MISS on key: %s", str(key))
+            logger.info("Cache MISS: %s", _h)
             return default  # expired
         else:
             self._last_used = _h
-            logging.debug("Cache HIT with key: %s", str(key))
+            logger.info("Cache HIT: %s", _h)
             return pickle.loads(row[1])  # value
 
-    def evit(self, key):
+    def evict(self, key):
         """Deletes cache entry with key. Useful in testing."""
         _h = hash_key(key)
-        self.c.cursor.execute("DELETE FROM api_cache WHERE key=?", [_h])
+        self.c.cursor.execute(f"DELETE FROM {self.table} WHERE key=?", (_h,))
         self.c.conn.commit()
+        logger.info("Cache entry evicted: %s", _h)
 
 
-def make_cache_key(func: Callable, *args, **kwd):
-    """Encodes an api to a hashable key.
+def make_cache_key(func: Union[Callable, Coroutine], *args, **kwd):
+    """Hashes a function and its arguments using sha256.
 
-    The API function is hashed using function_hash() to a string.
+    The function is hashed using function_hash() to a string.
     The args and kwds are converted to strings.
-    If any of args or kwd is a function, this function encodes them
-    by inspecting source code. If the source code is changed, this function encodes a different value.
+    If any of args or kwd is a function, this function encodes them by inspecting source code.
+    If the source code is changed, this function encodes a different value.
 
     Args:
-        func: An API function defined under eve_tools/api directory.
+        func: A function or a coroutine.
         args: Argument passed to the api function in argument form.
         kwd: Keyword arguments passed to the api function.
 
@@ -149,17 +153,17 @@ def make_cache_key(func: Callable, *args, **kwd):
     _h = function_hash(func)
 
     ret = (_h, str(func_args), str(func_kwd))
-    logger.debug("Making cache key for %s: %s", func.__qualname__, str(ret))
+    logger.info("Making cache key for %s", func.__qualname__)
     return ret
 
 
-def function_hash(func: Callable):
+def function_hash(func: Union[Callable, Coroutine]):
     """Hashes a function.
 
     Hashes a function based on its source code. If the source code is modified in any way,
     this function hashes to a different value.
     """
     return "esi_function-{}-{}".format(
-        func.__name__,
+        func.__qualname__,
         hashlib.sha256(inspect.getsource(func).encode("utf-8")).hexdigest(),
     )

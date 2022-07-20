@@ -36,20 +36,23 @@ class ESIRequest:
             usually contains "Authorization" field, or other user defined fields.
         params: Optional[dict]
             A dictionary containing params for the url.
-            Contains necessary info for ESI, such as {"character_id": 1234555}
+            Contains necessary info for ESI, such as {"type_id": 12005}
+        kwd: Optional[dict]
+            A dictionary containing keywords used for the request.
         token: Optional[Token]
             A Token instance used for this request. Default None if request is unauthenticated.
     """
 
-    request_key: str  # paths[key]
-    request_type: str  # 'GET' or 'POST'
+    request_key: Optional[str] = None  # paths[key]
+    request_type: Optional[str] = None  # 'GET' or 'POST'
 
-    parameters: ESIParams
-    security: List[str]  # default to []
+    parameters: Optional[ESIParams] = None
+    security: List[str] = None  # default to []
 
     url: Optional[str] = None
     headers: Optional[dict] = field(default_factory=dict)
     params: Optional[dict] = field(default_factory=dict)
+    kwd: Optional[dict] = field(default_factory=dict)
 
     token: Optional[Token] = None
 

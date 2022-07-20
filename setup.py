@@ -1,18 +1,15 @@
+import os
 from setuptools import setup, find_packages
 
 # 0.1.1: Packaging to PyPI
 version = "0.1.1"
 test_version = "0.1.1.3"
 
-install_requirements = [
-    "pandas",
-    "numpy",
-    "requests",
-    "aiohttp",
-    "python-jose",
-    "pyperclip",
-    "pyyaml",
-]
+install_requirements = []
+if os.path.isfile("requirements.txt"):
+    with open("requirements.txt", "r") as f:
+        install_requirements = f.read().splitlines()
+
 
 with open("README.md", "r") as rm:
     README = rm.read()
@@ -21,7 +18,7 @@ setup(
     name="eve_tools",
     version=version,
     author="Hanbo",
-    author_email="ghbhanbo@gmail.com",
+    author_email="hb.evetools@gmail.com",
     description="Tools collection for EVE game plays.",
     long_description=README,
     long_description_content_type="text/markdown",

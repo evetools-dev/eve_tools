@@ -33,8 +33,13 @@ esi:
       PRIMARY KEY(type_id, region_id, date)
 
 cache:
-  tables: [api_cache]
+  tables: [api_cache, checker_cache]
   api_cache:
+    schema:
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      expires TIMESTAMP NOT NULL
+  checker_cache:
     schema:
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
