@@ -1,17 +1,24 @@
+# Data files #
 *.csv
 *.json
 !application.json
 *.log
 *.db
+*.vscode
+
+# Distribution files # 
+dist
+*.egg-info
+*.bat
+
+# Python files #
 main.py
 __pycache__
 
-doc
-dist
-*.egg-info
-*.vscode
-*.bat
-venv
+# doc #
+doc/build
+!make.bat
 
+# tox testing tool
 *tox
 tox.ini

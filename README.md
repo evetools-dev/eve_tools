@@ -1,12 +1,10 @@
 # EVE Tools for trading
 
-> A collection of trading tools that are helpful for EVE game plays.
+> Trading tools collection for EVE Online.
 
 _Author: Hanbo Guo_
 
-_EVE character: Hanbie Serine_
-
-_Contact: hbopublic@163.com_
+_Contact: hb.evetools@gmail.com_
 
 
 ## What is EVE Tools
