@@ -666,20 +666,19 @@ class _RequestChecker:
         valid = True
         # Check type_id if exists
         if "type_id" in api_request.params:
-            valid = await self._check_request_type_id(api_request)
+            type_id = api_request.params.get("type_id")
+            valid = await self._check_request_type_id(type_id)
 
         return valid
 
     @cache_check_request
-    async def _check_request_type_id(self, api_request: ESIRequest) -> bool:
+    async def _check_request_type_id(self, type_id: int) -> bool:
         """Checks if a type_id is valid.
 
         Uses type_id from api_requests.params["type_id"].
         First checks using SDE, then checks using ESI endpoint if SDE passed.
         This method is independent from api/check and api/search.
         """
-        type_id = api_request.params.get("type_id")
-
         if type_id not in self.invTypes["typeID"].values:
             return False
 
@@ -693,7 +692,6 @@ class _RequestChecker:
         ) as session:
             async with session.get(
                 f"https://esi.evetech.net/latest/universe/types/{type_id}/?datasource=tranquility&language=en",
-                headers=api_request.headers,
             ) as resp:
                 data: dict = await resp.json()
                 published = data.get("published")

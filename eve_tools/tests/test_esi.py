@@ -221,21 +221,21 @@ class TestRequestChecker(unittest.TestCase):
 
     def test_check_type_id(self):
         """Tests _RequestChecker._check_request_type_id()."""
-        api_request = ESIRequest(params={"type_id": 12005})
+        type_id = 12005
         res = request_from_ESI(
-            self.checker._check_request_type_id, api_request, cache=self.checker_cache
+            self.checker._check_request_type_id, type_id, cache=self.checker_cache
         )
         self.assertTrue(res)
 
-        api_request = ESIRequest(params={"type_id": 12007})  # blocked: not a type_id
+        type_id = 12007  # blocked: not a type_id
         res = request_from_ESI(
-            self.checker._check_request_type_id, api_request, cache=self.checker_cache
+            self.checker._check_request_type_id, type_id, cache=self.checker_cache
         )
         self.assertFalse(res)
 
-        api_request = ESIRequest(params={"type_id": 63715})  # blocked: ESI endpoint
+        type_id = 63715  # blocked: ESI endpoint
         res = request_from_ESI(
-            self.checker._check_request_type_id, api_request, cache=self.checker_cache
+            self.checker._check_request_type_id, type_id, cache=self.checker_cache
         )
         self.assertFalse(res)
 
@@ -247,4 +247,3 @@ class TestSSO(unittest.TestCase):
         msg = "ESI_TEST"
         self.assertIsNone(to_clipboard(msg))
         self.assertEqual(msg, read_clipboard())
-
