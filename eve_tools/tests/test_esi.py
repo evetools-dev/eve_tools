@@ -6,6 +6,7 @@ from eve_tools.ESI import ESIClient
 from eve_tools.ESI.metadata import ESIMetadata, ESIRequest
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
 from eve_tools.ESI.esi import _RequestChecker
+from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
 from eve_tools.data import CacheDB
 from eve_tools.data.cache import SqliteCache
 from eve_tools.tests.utils import request_from_ESI
@@ -237,3 +238,13 @@ class TestRequestChecker(unittest.TestCase):
             self.checker._check_request_type_id, api_request, cache=self.checker_cache
         )
         self.assertFalse(res)
+
+
+class TestSSO(unittest.TestCase):
+    def test_pc_copy(self):
+        # Testing check_call and other cmd are not necessary.
+        # Only to make sure we can copy/paste correctly.
+        msg = "ESI_TEST"
+        self.assertIsNone(to_clipboard(msg))
+        self.assertEqual(msg, read_clipboard())
+
