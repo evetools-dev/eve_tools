@@ -9,7 +9,6 @@ from eve_tools.api import search_structure_id, search_id, search_station_region_
 from eve_tools.api.search import search_system_region_id
 from eve_tools.data import ESIDB
 from .utils import _update_or_not, _select_from_orders, cache
-from .check import _check_type_id_async
 
 
 @cache
@@ -29,7 +28,7 @@ def get_structure_market(
             If a string is given, it should be the precise name of the structure.
             If an integer is given, it should be a valid structure_id.
         cname: str
-            cname's character_id will be used in searching structure_id. 
+            cname's character_id will be used in searching structure_id.
             If supplied, this character needs to have docking access to structure.
         kwd.page: int
             An integer that specifies which page to retrieve from ESI. Defaul retrieving all orders from ESI.
@@ -62,7 +61,7 @@ def get_structure_market(
         sid = search_structure_id(structure_name_or_id, cname=cname)
 
     resp = ESIClient.head(
-        "/markets/structures/{structure_id}/", structure_id=sid, page=1
+        "/markets/structures/{structure_id}/", structure_id=sid, page=1, raises=True
     )
     headers = resp.headers
 
@@ -191,6 +190,7 @@ def get_region_market(
         order_type=order_type,
         type_id=type_id,
         page=1,
+        raises=True,
     )
     headers = resp.headers
 
@@ -396,12 +396,16 @@ async def _get_type_history_async(
             df["region_id"] = rid
         return df
 
-    if not await _check_type_id_async(type_id):
-        return
-
     resp = await ESIClient.request(
-        "get", "/markets/{region_id}/history/", region_id=rid, type_id=type_id
+        "get",
+        "/markets/{region_id}/history/",
+        region_id=rid,
+        type_id=type_id,
+        raises=None,
     )
+    if resp is None:
+        return None
+
     resp = resp.data
     if len(resp) == 0:
         return
@@ -495,14 +499,48 @@ def get_market_history(
 
     if type_ids is None:
         type_ids = get_region_types(rid)
-    
-    tasks = [
-        asyncio.ensure_future(_get_type_history_async(rid, type_id, reduces))
-        for type_id in type_ids
-    ]
-    loop = asyncio.get_event_loop()
-    ret = loop.run_until_complete(asyncio.gather(*tasks))
-    df = pd.concat(ret, ignore_index=True)
+
+    resp = ESIClient.get(
+        "/markets/{region_id}/history/",
+        async_loop=["type_id"],
+        region_id=rid,
+        type_id=type_ids,
+    )
+
+    for i in range(len(resp)):
+        respp = resp[i]
+        data = respp.data
+        if len(data) == 0:
+            resp[i] = None
+            continue
+        df = pd.DataFrame(data)
+        type_id = respp.request_info.params.get("type_id")
+        df["type_id"] = type_id
+        df["region_id"] = rid
+        # ESI updates history on 11:05:00 GMT, 39900 for 11:05 in timestamp, UTC is the same as GMT
+        df["date"] = df["date"].apply(
+            lambda date: datetime.timestamp(
+                datetime.strptime(f"{date} +0000", "%Y-%m-%d %z")
+            )
+            + 39900
+        )
+        df = df[ESIDB.columns["market_history"]]
+
+        df.to_sql(
+            "market_history",
+            ESIDB.conn,
+            if_exists="append",
+            index=False,
+            method=ESIDB.history_insert_ignore,
+        )
+
+        if reduces:
+            df = reduces(df)
+            df["type_id"] = type_id
+            df["region_id"] = rid
+        resp[i] = df
+
+    df = pd.concat(resp, ignore_index=True)
     return df
 
 
@@ -559,7 +597,9 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
 
 
 @cache(expires=24 * 3600)
-def get_structure_types(structure_name_or_id: Union[str, int], cname: str = "any") -> List[int]:
+def get_structure_types(
+    structure_name_or_id: Union[str, int], cname: str = "any"
+) -> List[int]:
     """Gets type_ids with active orders in a structure.
 
     Searches market orders in esi.db database, which includes current and possibly some historic orders.
@@ -571,7 +611,7 @@ def get_structure_types(structure_name_or_id: Union[str, int], cname: str = "any
             If a string is given, it should be the precise name of the structure.
             If an integer is given, it should be a valid structure_id.
         cname: str
-            cname's character_id will be used in searching structure_id. 
+            cname's character_id will be used in searching structure_id.
             If supplied, this character needs to have docking access to structure.
 
     Returns:

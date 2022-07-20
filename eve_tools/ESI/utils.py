@@ -9,6 +9,9 @@ from functools import wraps
 from inspect import iscoroutinefunction
 from typing import Callable, Coroutine, List, Optional, Union
 
+from eve_tools.data import make_cache_key, CacheDB
+from eve_tools.data.cache import SqliteCache
+
 
 BAD_REQUEST = 400
 NOT_FOUND = 404
@@ -40,6 +43,7 @@ class ESIRequestError:
         self.raises = raises
 
     def wrapper_retry(self, func: Coroutine):
+        # This func is ESI.async_request wrapped by _session_recorder()
         @wraps(func)
         async def wrapped_retry(_esi_self, *args, **kwd):
             """Retry ESI request upon error.
@@ -59,7 +63,8 @@ class ESIRequestError:
                 try:
                     ret = await func(_esi_self, *_args, **_kwd)  # ESIResponse instance
                     success = True
-                    self._global_error_remain[0] = ret.error_remain
+                    if ret is not None:
+                        self._global_error_remain[0] = ret.error_remain
                 except ClientResponseError as exc:
                     attempts -= 1
                     resp_code = exc.status
@@ -101,21 +106,36 @@ class _SessionRecord:
             Time used for a request. Only functional for synchronous requests, such as ESI.get().
         expires: Optional[str]
             API cache uses this to know how long the response expires.
+        requests_failed: Optional[int]
+            Number of failed requests made. Increments when ClientResponseError is raised.
+        requests_succeed: Optional[int]
+            Number of successful requests made. Increments when ClientResponseError not raised.
+        requests_blocked: Optional[int]
+            Number of blocked requests made. Increments when ESI._check_request() blocks a request.
     """
 
     requests: Optional[int] = 0
     timer: Optional[float] = 0.0
     expires: Optional[str] = None
+    requests_failed: Optional[int] = 0
+    requests_succeed: Optional[int] = 0
+    requests_blocked: Optional[int] = 0
 
     def clear(self, field: Optional[str] = None):
         if field is None:
             self.expires = None
             self.requests = 0
             self.timer = 0.0
+            self.requests_failed = 0
+            self.requests_succeed = 0
+            self.requests_blocked = 0
         elif field == "expires":
             self.expires = None
         elif field == "requests":
             self.requests = 0
+            self.requests_failed = 0
+            self.requests_succeed = 0
+            self.requests_blocked = 0
         elif field == "timer":
             self.timer = 0.0
 
@@ -129,6 +149,9 @@ class _SessionRecord:
                 self.expires == __other.expires
                 and self.requests == __other.requests
                 and self.timer == __other.timer
+                and self.requests_failed == __other.requests_failed
+                and self.requests_succeed == __other.requests_succeed
+                and self.requests_blocked == __other.requests_blocked
             )
 
         raise NotImplemented
@@ -145,18 +168,24 @@ def _session_recorder(
     """
 
     def _session_recorder_wrapper(func: Union[Coroutine, Callable]):
+        # func is ESI.async_request or ESI.get/head
         @wraps(func)
         async def _session_recorder_wrapped_async(_self, *args, **kwd):
             """Used when a coroutine function is decorated."""
             if not _self._record_session:
                 return await func(_self, *args, **kwd)
 
+            resp = None
             time_start = time.monotonic_ns()
-            resp = await func(
-                _self, *args, **kwd
-            )  # this _self should be an instance of ESI
-            time_finish = time.monotonic_ns()
-            _session_record_fill(_self, resp, time_start, time_finish)
+            try:
+                resp = await func(_self, *args, **kwd)  # _self: ESI
+            except ClientResponseError:
+                time_finish = time.monotonic_ns()
+                _session_record_fill(_self, resp, time_start, time_finish, failed=True)
+                raise  # ESIRequestError catches this
+            else:
+                time_finish = time.monotonic_ns()
+                _session_record_fill(_self, resp, time_start, time_finish, failed=False)
 
             return resp
 
@@ -166,15 +195,21 @@ def _session_recorder(
             if not _self._record_session:
                 return func(_self, *args, **kwd)
 
+            resp = None
             time_start = time.monotonic_ns()
-            resp = func(_self, *args, **kwd)  # this _self should be an instance of ESI
-            time_finish = time.monotonic_ns()
-
-            _session_record_fill(_self, resp, time_start, time_finish)
+            try:
+                resp = func(_self, *args, **kwd)  # _self: ESI
+            except ClientResponseError:
+                time_finish = time.monotonic_ns()
+                _session_record_fill(_self, resp, time_start, time_finish, failed=True)
+                raise  # ESIRequestError catches this
+            else:
+                time_finish = time.monotonic_ns()
+                _session_record_fill(_self, resp, time_start, time_finish, failed=False)
 
             return resp
 
-        def _session_record_fill(_self, resp, t_s, t_f):
+        def _session_record_fill(_self, resp, t_s, t_f, failed: bool):
             """Fills out useful info of from the response.
             Defines rules to fill out a _SessionRecord instance."""
             nonlocal fields, exclude
@@ -193,9 +228,21 @@ def _session_recorder(
 
             # Update requests
             if (fields is None or "requests" in fields) and (
-                exclude is None or "request" not in exclude
+                exclude is None or "requests" not in exclude
             ):
                 record.requests += 1
+
+                # Update requests_blocked
+                if resp is None and not failed:
+                    record.requests_blocked += 1
+
+                # Update requests_failed
+                if failed:
+                    record.requests_failed += 1
+
+                # Update requests_succeed
+                if resp is not None and not failed:
+                    record.requests_succeed += 1
 
             # Update timer
             if (fields is None or "timer" in fields) and (
@@ -207,15 +254,16 @@ def _session_recorder(
             if (fields is None or "expires" in fields) and (
                 exclude is None or "expires" not in exclude
             ):
-                expires = resp.expires
 
-                if record.expires is None:
-                    record.expires = expires
-                elif expires:
-                    expires_dt = datetime(*parsedate(expires)[:6])
-                    record_dt = datetime(*parsedate(record.expires)[:6])
-                    if expires_dt < record_dt:
-                        record.expires = expires
+                if resp is not None and resp.expires:
+                    if record.expires is None:
+                        record.expires = resp.expires
+                    else:
+                        expires_dt = datetime(*parsedate(resp.expires)[:6])
+                        record_dt = datetime(*parsedate(record.expires)[:6])
+                        if expires_dt < record_dt:
+                            record.expires = resp.expires
+
             return
 
         if iscoroutinefunction(func):
@@ -230,3 +278,25 @@ def _session_recorder(
         return _session_recorder_wrapper(func)
 
     raise NotImplementedError
+
+
+checker_cache = SqliteCache(CacheDB, "checker_cache")
+
+
+def cache_check_request(func: Coroutine):
+    # func has signature: async def _check_*(self, *) -> boolh
+    @wraps(func)
+    async def cache_check_request_wrapped(_self, *args, **kwd):
+        # Caches _RequestChecker methods
+        key = make_cache_key(func, *args, **kwd)
+        value = checker_cache.get(key)
+        if value is not None:  # cache hit
+            return value
+
+        ret = await func(_self, *args, **kwd)  # exec
+
+        expires = 24 * 3600 * 30  # one month
+        checker_cache.set(key, ret, expires)
+        return ret
+
+    return cache_check_request_wrapped
