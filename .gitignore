@@ -22,3 +22,6 @@ doc/build
 # tox testing tool
 *tox
 tox.ini
+
+# OS related #
+.DS_Store
