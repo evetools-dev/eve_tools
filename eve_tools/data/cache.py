@@ -4,6 +4,7 @@ import inspect
 import logging
 import pickle
 from email.utils import parsedate
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Coroutine, Union, Callable
 
@@ -17,13 +18,48 @@ def hash_key(key) -> str:
     return "esi_cache-" + hashlib.sha256(pickle.dumps(key)).hexdigest()
 
 
-class BaseCache(object):
+class _CacheRecordBaseClass:
+    """Base class holding all cache instances.
+    Provides stats over all instances."""
+
+    instances = set()
+
+    @property
+    def record(self):
+        ret = [_cache.record for _cache in self.instances]
+        return ret
+
+
+CacheStats = _CacheRecordBaseClass()
+
+
+@dataclass
+class _CacheRecord:
+    """Records hits and misses of a cache instance."""
+
+    caller: str = None
+    id: int = 0
+    hits: int = 0
+    miss: int = 0
+
+
+class BaseCache(_CacheRecordBaseClass):
     """Specifies BaseCache object used by other caching implimentation.
 
     Requires set and get method for api(s) to access the cache.
-    evict is useful for testing. The user should not be required to call evievictt
-    to clear expired entries, which should be defined somewhere else.
+    evict is useful for testing. Expired entries should be deleted in get or set,
+    so user would not be required to call evict all the time.
+    User of BaseCache should call super().__init__() to register instance under cache stats.
     """
+
+    def __init__(self):
+        self.__class__.instances.add(self)
+        self._record = _CacheRecord()
+        module = inspect.getmodule(inspect.stack(0)[2][0])
+        if module is not None:
+            module = module.__name__
+        self._record.caller = module
+        self._record.id = id(self)
 
     def set(self, key, value, expires):
         raise NotImplementedError
@@ -33,6 +69,26 @@ class BaseCache(object):
 
     def evict(self, key):
         raise NotImplementedError
+
+    @property
+    def record(self):
+        return self._record
+
+    @property
+    def hits(self):
+        return self._record.hits
+
+    @property
+    def miss(self):
+        return self._record.miss
+
+    @hits.setter
+    def hits(self, val):
+        self._record.hits = val
+
+    @miss.setter
+    def miss(self, val):
+        self._record.miss = val
 
 
 class SqliteCache(BaseCache):
@@ -48,6 +104,7 @@ class SqliteCache(BaseCache):
         self.table = table
 
         self._last_used = None  # used for testing
+        super().__init__()
 
     def set(self, key, value, expires: Union[str, int] = None):
         """Sets k/v pair with expires.
@@ -96,15 +153,19 @@ class SqliteCache(BaseCache):
             f"SELECT * FROM {self.table} WHERE key=?", (_h,)
         ).fetchone()
         if not row:
+            logger.info("Cache MISS: %s", _h)
+            self.miss += 1
             return default
 
         expires = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
         if datetime.utcnow() > expires:
             logger.info("Cache MISS: %s", _h)
+            self.miss += 1
             return default  # expired
         else:
             self._last_used = _h
             logger.info("Cache HIT: %s", _h)
+            self.hits += 1
             return pickle.loads(row[1])  # value
 
     def evict(self, key):
@@ -119,7 +180,7 @@ def make_cache_key(func: Union[Callable, Coroutine], *args, **kwd):
     """Hashes a function and its arguments using sha256.
 
     The function is hashed using function_hash() to a string.
-    The args and kwds are converted to strings.
+    The args and kwds are pickled to bytes.
     If any of args or kwd is a function, this function encodes them by inspecting source code.
     If the source code is changed, this function encodes a different value.
 
@@ -152,7 +213,7 @@ def make_cache_key(func: Union[Callable, Coroutine], *args, **kwd):
             func_kwd[k] = list(set(func_kwd[k]))
     _h = function_hash(func)
 
-    ret = (_h, str(func_args), str(func_kwd))
+    ret = (_h, pickle.dumps(func_args), pickle.dumps(func_kwd))
     logger.info("Making cache key for %s", func.__qualname__)
     return ret
 
