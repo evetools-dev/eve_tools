@@ -254,7 +254,6 @@ def _session_recorder(
             if (fields is None or "expires" in fields) and (
                 exclude is None or "expires" not in exclude
             ):
-
                 if resp is not None and resp.expires:
                     if record.expires is None:
                         record.expires = resp.expires

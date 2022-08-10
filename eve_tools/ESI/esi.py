@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from tqdm.asyncio import tqdm_asyncio
 from typing import Iterable, Optional, Union, List
 
+
 from .token import ESITokens, Token
 from .metadata import ESIMetadata, ESIRequest
 from .application import ESIApplications, Application
@@ -93,9 +94,10 @@ class ESI(object):
         ### Session record
         self._record_session = True  # default recording
         self._record: _SessionRecord = _SessionRecord()
-
+        
         ### Request checker
         self._request_checker = _RequestChecker()
+
 
     @_session_recorder(fields="timer")
     def get(
@@ -143,12 +145,14 @@ class ESI(object):
             kwd.checks: bool
                 Whether to use _RequestChecker to incorrect requests.
 
+
         Returns:
             A dictionary or a list of dictionary, depends on async_loop argument.
 
         Note:
             If request needs character_id field and is an authenticated endpoint, character_id field is optional,
             because authentication result contains the character_id of the authenticated character.
+
 
         Example:
         >>> from eve_tools import ESIClient   # ESIClient is an instance instantiated upon import
