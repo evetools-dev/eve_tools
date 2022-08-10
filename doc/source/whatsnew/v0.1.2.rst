@@ -1,0 +1,26 @@
+Version 0.1.2 (August ?, 2022)
+====================================
+
+This is a bug-fix release in the 0.1.x series and includes api fixes. Please upgrade to this version to ensure usability.
+
+Bug fixes
+---------
+* Fixed `issue <https://github.com/evetools-dev/eve_tools/issues/4>`_ relating to `ESI removal of search endpoint <https://github.com/esi/esi-issues/blob/master/changelog.md>`_ by using SDE and authenticated search endpoint (`GH5 <https://github.com/evetools-dev/eve_tools/pull/5>`_)
+* Fixed clipboard copy functionality on ChromeOS (`GH8 <https://github.com/evetools-dev/eve_tools/pull/8>`_)
+
+
+Performance improvements
+------------------------
+* Check ESI type_id to block incorrect requests locally (`GH10 <https://github.com/evetools-dev/eve_tools/pull/10>`_)
+
+
+New features
+------------
+* Add cache usage recorder ``CacheStats`` (`commit <https://github.com/Haannbboo/eve_tools/commit/9768bd5f7e3458bed5d0c1c20789fb57940413cf>`_)
+
+
+Contributors
+------------
+A total of 1 people contributed patches to this release.
+
+* Hanbo Guo

@@ -1,0 +1,27 @@
+Version 0.1.1 (July 4, 2022)
+==================================
+
+This release adds ``ESI`` request functionality with some ``api`` functions.
+
+New features
+------------
+* Add ``ESI`` request family for sending get/head requests to ESI (`GH1 <https://github.com/evetools-dev/eve_tools/pull/1>`_)
+* Add ``api`` module that parses result from ``ESI`` into readable formats:
+    * ``check``: check if an ESI entity is valid
+    * ``market``: retrieve market orders, types, and history from NPC station or player's structure
+    * ``search``: translate between names and ids, vice versa, of ESI entity
+* Add :func:`hauling` to ``examples.py``
+* Add tests to ``api`` module (`GH2 <https://github.com/evetools-dev/eve_tools/pull/2>`_)
+* Add ``ESIResponse`` object for holding response info (`GH3 <https://github.com/evetools-dev/eve_tools/pull/3>`_)
+
+
+Performance enhancements
+------------------------
+* Add caching to ``api`` module (`GH1 <https://github.com/evetools-dev/eve_tools/pull/1>`_)
+
+
+Contributors
+------------
+A total of 1 people contributed to this release.
+
+* Hanbo Guo
