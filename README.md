@@ -1,12 +1,10 @@
 # EVE Tools for trading
 
-> A collection of trading tools that are helpful for EVE game plays.
+> Trading tools collection for EVE Online.
 
 _Author: Hanbo Guo_
 
-_EVE character: Hanbie Serine_
-
-_Contact: hbopublic@163.com_
+_Contact: hb.evetools@gmail.com_
 
 
 ## What is EVE Tools
@@ -28,7 +26,7 @@ or
 
 #### 1.2 Run `requirements.txt` file with pip install.
 ```sh
-cd path/to/your/download/EVE_tools-master
+cd path/to/your/download/eve_tools-master
 
 pip3 install -r requirements.txt
 ```
@@ -40,11 +38,23 @@ python setup.py install
 -----
 ### 2. Try with `example.py`
 
-Download `examples.py`, run it by:
+Download `examples.py` by cp/paste it to an empty Python file, run it by:
 * double clicking it (in Windows)
 * or go to a Python IDE to launch it 
-* or
+* or use cmd line, cd to its directory, run:
 ```sh
 python examples.py
 ```
 You will see the result `hauling.csv` generated in the same directory as `examples.py`.
+
+### 3. Run tests
+
+Go to a Python editor, run the following code:
+```python
+from eve_tools import *
+import unittest
+
+unittest.main()
+```
+
+You would see around 20+ tests running. Internet connection is required.

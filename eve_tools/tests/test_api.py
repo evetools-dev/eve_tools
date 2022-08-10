@@ -114,7 +114,8 @@ class TestMarket(unittest.TestCase, TestInit):
     #     self.assertGreater(len(resp), 10000)  # at least 10k types in Jita
     #     self.assertLess(len(resp), 100000)  # should correctly reduce # columns
     #     self.assertIn(12005, resp["type_id"].values)
-    #     self.assertGreater(resp["volume_seven_days"].values[0], 1)
+    #     ishtar = resp.loc[resp["type_id"] == 12005]
+    #     self.assertGreater(int(ishtar["volume_seven_days"]), 1)
 
     #     # Test: cache returns correctly
     #     self.assertTrue(resp.equals(resp_cache))
