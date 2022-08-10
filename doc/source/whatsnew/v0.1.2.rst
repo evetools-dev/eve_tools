@@ -1,4 +1,4 @@
-Version 0.1.2 (August ?, 2022)
+Version 0.1.2 (August 10, 2022)
 ====================================
 
 This is a bug-fix release in the 0.1.x series and includes api fixes. Please upgrade to this version to ensure usability.

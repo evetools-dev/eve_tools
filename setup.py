@@ -1,9 +1,9 @@
 import os
 from setuptools import setup, find_packages
 
-# 0.1.1: Packaging to PyPI
-version = "0.1.1"
-test_version = "0.1.1.3"
+# 0.1.2: Bug fix
+version = "0.1.2"
+test_version = "0.1.2.0"
 
 install_requirements = []
 if os.path.isfile("requirements.txt"):
