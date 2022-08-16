@@ -2,7 +2,6 @@ import pandas as pd
 import time
 import unittest
 
-
 from eve_tools.api import *
 from eve_tools.api.search import InvType, SolarSystem, Station, Structure
 from eve_tools.api.utils import reduce_volume
@@ -11,8 +10,10 @@ from .utils import TestInit, request_from_ESI
 
 class TestMarket(unittest.TestCase, TestInit):
     def test_get_structure_types(self):
-        resp = request_from_ESI(get_structure_types, self.structure_name, self.cname)
-        resp_cache = get_structure_types(self.structure_name, self.cname)
+        resp = request_from_ESI(
+            get_structure_types, self.config.structure_name, self.config.cname
+        )
+        resp_cache = get_structure_types(self.config.structure_name, self.config.cname)
 
         # Test: api returns correct value
         self.assertGreater(len(resp), 2)  # resp contains some type_id(s)
@@ -21,7 +22,7 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertIn(1405, resp)  # 1405: inertial stabilizer
 
         # Test: if sid given, cname is optional
-        sid = search_structure_id(self.structure_name, self.cname)
+        sid = search_structure_id(self.config.structure_name, self.config.cname)
         resp_sid = request_from_ESI(get_structure_types, sid, "some weird cname")
         self.assertEqual(set(resp), set(resp_sid))
 
@@ -211,9 +212,9 @@ class TestMarket(unittest.TestCase, TestInit):
 
     def test_get_structure_market(self):
         resp: pd.DataFrame = request_from_ESI(
-            get_structure_market, self.structure_name, self.cname
+            get_structure_market, self.config.structure_name, self.config.cname
         )
-        resp_cache = get_structure_market(self.structure_name, self.cname)
+        resp_cache = get_structure_market(self.config.structure_name, self.config.cname)
 
         # Test: api returns correct value
         self.assertGreater(len(resp), 2)  # resp contains some orders
@@ -223,7 +224,7 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertIn(1405, resp["type_id"].values)  # 1405: inertial stabilizer
 
         # Test: cname is optional
-        sid = search_structure_id(self.structure_name, self.cname)
+        sid = search_structure_id(self.config.structure_name, self.config.cname)
         resp_sid = request_from_ESI(get_structure_market, sid, "some weird cname")
         self.assertEqual(set(resp), set(resp_sid))
 
@@ -238,7 +239,7 @@ class TestSearch(unittest.TestCase, TestInit):
         # Test: invalid category
         with self.assertRaises(ValueError):
             request_from_ESI(search_id, "abc", "category not exist")
-        
+
         # Test: no record
         with self.assertRaises(ValueError):
             request_from_ESI(search_id, "Hanbie Seri", "character")
@@ -256,13 +257,15 @@ class TestSearch(unittest.TestCase, TestInit):
         self.assertEqual(resp, resp_cache)
 
     def test_search_structure_id(self):
-        resp = request_from_ESI(search_structure_id, self.structure_name, self.cname)
-        resp_cache = search_structure_id(self.structure_name, self.cname)
+        resp = request_from_ESI(
+            search_structure_id, self.config.structure_name, self.config.cname
+        )
+        resp_cache = search_structure_id(self.config.structure_name, self.config.cname)
         self.assertEqual(resp, resp_cache)
         self.assertGreater(resp, 1000000000000)
-    
+
     def test_search_structure(self):
-        sid = search_structure_id(self.structure_name, self.cname)
+        sid = search_structure_id(self.config.structure_name, self.config.cname)
         resp: Structure = request_from_ESI(search_structure, sid)
         resp_cache = search_structure(sid)
         self.assertEqual(resp, resp_cache)
