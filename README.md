@@ -51,10 +51,13 @@ You will see the result `hauling.csv` generated in the same directory as `exampl
 
 Go to a Python editor, run the following code:
 ```python
-from eve_tools import *
+from eve_tools.tests import *
 import unittest
 
+test_config.set(cname="your character", structure_name="structure that you have docking access")
 unittest.main()
 ```
 
 You would see around 20+ tests running. Internet connection is required.
+If you witness any error during testing, please [email me](hb.evetools@gmail.com). 
+Feel free to leave your in-game character name. I will send you some isk if your feedback helps to improve this project.
