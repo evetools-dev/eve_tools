@@ -5,6 +5,8 @@
 *.log
 *.db
 *.vscode
+config.yml
+*-journal
 
 # Distribution files # 
 dist
