@@ -1,6 +1,8 @@
+import os
 import unittest
 from typing import Callable, List
 
+from eve_tools.data import ESIDBManager
 from eve_tools.data import CacheDB, CacheStats, make_cache_key
 from eve_tools.data.cache import SqliteCache
 
@@ -14,9 +16,12 @@ def _plus_one(n: int):
 
 
 class TestCache(unittest.TestCase):
+    TESTDIR = os.path.realpath(os.path.dirname(__file__))
+    TESTDB = ESIDBManager("test", parent_dir=TESTDIR, schema_name="cache")
+
     def test_cache_record(self):
         """Test CacheStats and _CacheRecord"""
-        cache = SqliteCache(CacheDB, "checker_cache")
+        cache = SqliteCache(self.TESTDB, table="api_cache")
         self.assertEqual(id(cache), cache.record.id)
 
         # Test: miss/hits setter & getter
@@ -52,3 +57,8 @@ class TestCache(unittest.TestCase):
         self.assertIsNotNone(instance)
         self.assertEqual(instance.hits, 1)
         self.assertEqual(instance.miss, 1)
+
+    
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.TESTDB.clear_db()

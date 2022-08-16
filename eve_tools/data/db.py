@@ -37,11 +37,25 @@ class ESIDBManager:
 
     Currently ESIDB is used to cache market api requests, which usually needs hundreds of ESI API calls.
     ESIDB is also useful to store time sensitive data, such as market data, which could be used for analysis.
+
+    Attributes:
+        db_name: str
+            Name of the database. If db_name is abc, the db file is named as "abc.db".
+        parent_dir: str
+            Location of the database file. Default under eve_tools/data/.
+        schema_name: str
+            Uses which schema predefined in schema.yaml. Default using schema with name db_name.
     """
 
-    def __init__(self, db_name):
+    def __init__(self, db_name, parent_dir: str = None, schema_name: str = None):
         self.db_name = db_name
-        self.conn = sqlite3.connect(os.path.join(DATA_DIR, db_name + ".db"))
+        if parent_dir is None:
+            parent_dir = DATA_DIR
+        self.schema_name = schema_name
+        if schema_name is None:
+            self.schema_name = db_name
+        
+        self.conn = sqlite3.connect(os.path.join(parent_dir, db_name + ".db"))
         self.cursor = self.conn.cursor()
 
         self.__init_tables()
@@ -52,12 +66,19 @@ class ESIDBManager:
         self.conn.close()
 
     def clear_table(self, table_name: str):
+        """Clears a table using DELETE FROM table"""
         self.cursor.execute(f"DELETE FROM {table_name};")
         self.conn.commit()
 
     def drop_table(self, table_name: str):
+        """Drops a table using DROP TABLE table"""
         self.cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
         self.conn.commit()
+
+    def clear_db(self):
+        """Clears tables of db by calling clear_table() on every table."""
+        for table in self.tables:
+            self.clear_table(table)
 
     @staticmethod
     def orders_insert_update(table, conn, keys, data_iter):
@@ -99,9 +120,9 @@ class ESIDBManager:
         self.columns = ret
 
     def __init_tables(self):
-        with open(os.path.join(DATA_DIR, "dbconfig.yaml")) as f:
+        with open(os.path.join(DATA_DIR, "schema.yml")) as f:
             dbconfig = yaml.full_load(f)
-        self._dbconfig = dbconfig.get(self.db_name)
+        self._dbconfig = dbconfig.get(self.schema_name)
         self.tables = self._dbconfig.get("tables")
         for table in self.tables:
             table_config = self._dbconfig.get(table)
