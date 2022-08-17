@@ -5,10 +5,16 @@ import unittest
 from eve_tools.api import *
 from eve_tools.api.search import InvType, SolarSystem, Station, Structure
 from eve_tools.api.utils import reduce_volume
+from eve_tools.log import getLogger
 from .utils import TestInit, request_from_ESI
+
+logger = getLogger("test_api")
 
 
 class TestMarket(unittest.TestCase, TestInit):
+    def setUp(self) -> None:
+        logger.debug("TEST running: %s", self.id())
+
     def test_get_structure_types(self):
         resp = request_from_ESI(
             get_structure_types, self.config.structure_name, self.config.cname

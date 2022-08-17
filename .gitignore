@@ -2,7 +2,7 @@
 *.csv
 *.json
 !application.json
-*.log
+*.log*
 *.db
 *.vscode
 config.yml
@@ -16,6 +16,7 @@ dist
 # Python files #
 main.py
 __pycache__
+abc.py
 
 # doc #
 doc/build

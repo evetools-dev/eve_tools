@@ -5,10 +5,12 @@ from typing import Any, List, Optional
 from dataclasses import dataclass, field
 
 from eve_tools.config import METADATA_PATH
+from eve_tools.log import getLogger
 
 from .param import ESIParams, Param
 from .token import Token
 
+logger = getLogger(__name__)
 
 @dataclass
 class ESIRequest:
@@ -189,6 +191,7 @@ class ESIMetadata(object):
             metadata = r.json()
             with open(METADATA_PATH, "w") as metadata_file:
                 json.dump(metadata, metadata_file)
+                logger.debug("Load metadata from ESI")
         else:
             with open(METADATA_PATH) as metadata_file:
                 metadata = json.load(metadata_file)

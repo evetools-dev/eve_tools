@@ -8,3 +8,6 @@ from .paths import (
     APP_PATH,
     METADATA_PATH,
 )
+
+LOGLEVEL = 30  # WARNING
+LOGFILE = "esi.log"  # default filename

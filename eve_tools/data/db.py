@@ -3,6 +3,9 @@ import sqlite3
 import yaml
 
 from eve_tools.config import DATA_DIR
+from eve_tools.log import getLogger
+
+logger = getLogger(__name__)
 
 orders_columns = [
     "order_id",
@@ -60,6 +63,7 @@ class ESIDBManager:
 
         self.__init_tables()
         self.__init_columns()
+        logger.info("DB initiated with schema %s: %s @ %s", self.schema_name, db_name, parent_dir)
 
     def __del__(self):
         self.cursor.close()
@@ -69,16 +73,19 @@ class ESIDBManager:
         """Clears a table using DELETE FROM table"""
         self.cursor.execute(f"DELETE FROM {table_name};")
         self.conn.commit()
+        logger.debug("Clear table %s-%s successful", self.db_name, table_name)
 
     def drop_table(self, table_name: str):
         """Drops a table using DROP TABLE table"""
         self.cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
         self.conn.commit()
+        logger.debug("Drop table %s-%s successful", self.db_name, table_name)
 
     def clear_db(self):
         """Clears tables of db by calling clear_table() on every table."""
         for table in self.tables:
             self.clear_table(table)
+        logger.debug("Clear DB %s successful", self.db_name)
 
     @staticmethod
     def orders_insert_update(table, conn, keys, data_iter):

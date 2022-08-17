@@ -1,8 +1,8 @@
-import logging
 import requests
 import time
 
-logger = logging.getLogger(__name__)
+from eve_tools.log import getLogger
+logger = getLogger(__name__)
 
 
 def refresh_token(refresh_token: str, clientId: str):

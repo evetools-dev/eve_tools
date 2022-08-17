@@ -1,5 +1,4 @@
 import copy
-import logging
 import time
 from aiohttp import ClientResponseError
 from dataclasses import dataclass
@@ -9,9 +8,10 @@ from functools import wraps
 from inspect import iscoroutinefunction
 from typing import Callable, Coroutine, List, Optional, Union
 
-from eve_tools.data import make_cache_key, CacheDB
-from eve_tools.data.cache import SqliteCache
+from eve_tools.data import make_cache_key, CacheDB, SqliteCache
+from eve_tools.log import getLogger
 
+logger = getLogger(__name__)
 
 BAD_REQUEST = 400
 NOT_FOUND = 404
@@ -70,22 +70,24 @@ class ESIRequestError:
                     resp_code = exc.status
                     if resp_code in self.status_raise:
                         attempts = 0
-                    logging.warning("%s | attempts left: %s", exc, attempts)
 
                     self._global_error_remain[0] -= 1
 
                     # Raises if needed
-                    if self.raises is True and attempts == 0:
-                        raise
-                    if self.raises is False and attempts == 0:
-                        return None
-                    if self.raises is None and attempts == 0:
-                        # Why 5?
-                        # If set to 0, ESI will always give 420 error, not being informative.
-                        if self._global_error_remain[0] <= 5:
+                    if attempts == 0:
+                        logger.error("FAILED: %s | attempts left: %s", exc, attempts)
+                        if self.raises is True:
                             raise
-                        if self._global_error_remain[0] > 5:
+                        if self.raises is False:
                             return None
+                        if self.raises is None:
+                            # Why 5?
+                            # If set to 0, ESI will always give 420 error, not being informative.
+                            if self._global_error_remain[0] <= 5:
+                                raise
+                            if self._global_error_remain[0] > 5:
+                                return None
+                    logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
             return ret
 
         return wrapped_retry

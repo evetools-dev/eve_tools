@@ -7,12 +7,17 @@ from eve_tools.ESI.metadata import ESIMetadata, ESIRequest
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
 from eve_tools.ESI.esi import _RequestChecker
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
-from eve_tools.data import CacheDB
-from eve_tools.data.cache import SqliteCache
+from eve_tools.data import CacheDB, SqliteCache
 from eve_tools.tests.utils import request_from_ESI
+from eve_tools.log import getLogger
+
+logger = getLogger("test_esi")
 
 
 class TestESI(unittest.TestCase):
+    def setUp(self) -> None:
+        logger.debug("TEST running: %s", self.id())
+
     def test_api_session_recorder(self):
         """Tests ESI._start_api_session, ESI._end_api_session, ESI._clear_api_record, ESI._api_session_record"""
         # Test: clear session
@@ -242,6 +247,7 @@ class TestRequestChecker(unittest.TestCase):
 
 class TestSSO(unittest.TestCase):
     def test_pc_copy(self):
+        """Verify pyperclip.copy() functionality"""
         # Testing check_call and other cmd are not necessary.
         # Only to make sure we can copy/paste correctly.
         msg = "ESI_TEST"

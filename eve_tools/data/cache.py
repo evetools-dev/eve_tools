@@ -1,21 +1,22 @@
 """Implementation referenced from ESIPy under BSD-3-Clause License"""
 import hashlib
 import inspect
-import logging
 import pickle
 from email.utils import parsedate
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Coroutine, Union, Callable
 
-from eve_tools.data.db import ESIDBManager
+from eve_tools.data import ESIDBManager
+from eve_tools.log import getLogger
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 def hash_key(key) -> str:
     """Default hashing function for a key. Using sha256 as hash function."""
-    return "esi_cache-" + hashlib.sha256(pickle.dumps(key)).hexdigest()
+    name = key[-1]
+    return f"esi_cache-{name}-" + hashlib.sha256(pickle.dumps(key)).hexdigest()
 
 
 class _CacheRecordBaseClass:
@@ -105,6 +106,7 @@ class SqliteCache(BaseCache):
 
         self._last_used = None  # used for testing
         super().__init__()
+        logger.info("SqliteCache initiated: %s-%s", esidb.db_name, table)
 
     def set(self, key, value, expires: Union[str, int] = None):
         """Sets k/v pair with expires.
@@ -133,7 +135,7 @@ class SqliteCache(BaseCache):
             (_h, pickle.dumps(value), expires),
         )
         self.c.conn.commit()
-        logger.info("Cache entry set: %s", _h)
+        logger.debug("Cache entry set: %s", _h)
 
     def get(self, key, default=None):
         """Gets the value from cache.
@@ -153,18 +155,18 @@ class SqliteCache(BaseCache):
             f"SELECT * FROM {self.table} WHERE key=?", (_h,)
         ).fetchone()
         if not row:
-            logger.info("Cache MISS: %s", _h)
+            logger.debug("Cache MISS: %s", _h)
             self.miss += 1
             return default
 
         expires = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
         if datetime.utcnow() > expires:
-            logger.info("Cache MISS: %s", _h)
+            logger.debug("Cache MISS: %s", _h)
             self.miss += 1
             return default  # expired
         else:
             self._last_used = _h
-            logger.info("Cache HIT: %s", _h)
+            logger.debug("Cache HIT: %s", _h)
             self.hits += 1
             return pickle.loads(row[1])  # value
 
@@ -173,7 +175,7 @@ class SqliteCache(BaseCache):
         _h = hash_key(key)
         self.c.cursor.execute(f"DELETE FROM {self.table} WHERE key=?", (_h,))
         self.c.conn.commit()
-        logger.info("Cache entry evicted: %s", _h)
+        logger.debug("Cache entry evicted: %s", _h)
 
 
 def make_cache_key(func: Union[Callable, Coroutine], *args, **kwd):
@@ -213,8 +215,7 @@ def make_cache_key(func: Union[Callable, Coroutine], *args, **kwd):
             func_kwd[k] = list(set(func_kwd[k]))
     _h = function_hash(func)
 
-    ret = (_h, pickle.dumps(func_args), pickle.dumps(func_kwd))
-    logger.info("Making cache key for %s", func.__qualname__)
+    ret = (_h, pickle.dumps(func_args), pickle.dumps(func_kwd), func.__qualname__)
     return ret
 
 

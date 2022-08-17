@@ -1,5 +1,4 @@
 from functools import wraps
-import logging
 import pandas as pd
 import time
 from typing import Callable, Optional, Tuple
@@ -7,8 +6,6 @@ from typing import Callable, Optional, Tuple
 from eve_tools.data import ESIDB, api_cache, make_cache_key
 from eve_tools.data.db import ESIDBManager
 from eve_tools.ESI import ESIClient
-
-logger = logging.getLogger(__name__)
 
 
 def _update_or_not(

@@ -19,9 +19,10 @@ from .utils import (
     cache_check_request,
 )
 from eve_tools.config import SDE_DIR
+from eve_tools.log import getLogger
 
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 @dataclass
@@ -94,10 +95,11 @@ class ESI(object):
         ### Session record
         self._record_session = True  # default recording
         self._record: _SessionRecord = _SessionRecord()
-        
+
         ### Request checker
         self._request_checker = _RequestChecker()
 
+        logger.info("ESI instance initiated")
 
     @_session_recorder(fields="timer")
     def get(
@@ -170,6 +172,7 @@ class ESI(object):
             raises = kwd.pop("raises")
 
         if not async_loop:
+            logger.debug("REQUEST GET - %s w/k %s", key, str(kwd))
             return self._event_loop.run_until_complete(
                 self.request("get", key, raises=raises, **kwd)
             )
@@ -217,6 +220,14 @@ class ESI(object):
                 recursive_looper(async_loop_cpy, kwd_cpy)
 
         recursive_looper(list(async_loop), kwd)
+
+        logger.debug(
+            "REQUEST GET - %s on %s: %d tasks w/k %s",
+            key,
+            str(async_loop),
+            len(tasks),
+            str(kwd),
+        )
 
         # self._event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
         self._event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
@@ -272,6 +283,7 @@ class ESI(object):
         >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
         """
         raises = kwd.pop("raises", True)
+        logger.debug("REQUEST HEAD - %s w/k %s", key, str(kwd))
         return self._event_loop.run_until_complete(
             self.request("head", key, raises=raises, **kwd)
         )
@@ -333,7 +345,7 @@ class ESI(object):
             with ESITokens(app) as tokens:
                 cname = kwd.pop("cname", "any")
                 if generate_token and not tokens.exist(cname):
-                    logger.debug("Generate token for request: %s %s", method, key)
+                    logger.debug("Generating token for request: %s %s", method, key)
                     token = tokens.generate()
                 else:
                     token = tokens[cname]
@@ -470,6 +482,7 @@ class ESI(object):
 
     def _check_key(self, key: str) -> None:
         if key not in self._metadata.paths:
+            logger.error("Invalid request key: %s", key)
             raise ValueError(f"{key} is not a valid request key.")
 
     def _check_method(self, api_request: ESIRequest, method: str) -> None:
@@ -483,6 +496,7 @@ class ESI(object):
         if method == "head" and req_method == "get":
             return
 
+        logger.error("Invalid request method: %s", method)
         raise ValueError(
             f"Request method {method} is not supported by {api_request.request_key} request."
         )
@@ -630,6 +644,7 @@ class ESI(object):
     def _clear_record(self, field: Optional[str] = None):
         """Clears record of the instance."""
         self._record.clear(field)
+        logger.debug("ESI SessionRecord cleared")
 
 
 class _RequestChecker:
@@ -646,18 +661,7 @@ class _RequestChecker:
     requests = 0  # just for fun
 
     async def __call__(self, api_request: ESIRequest) -> bool:
-        valid = await self._check_request(api_request)
-        if valid:
-            w = "PASSED"
-        else:
-            w = "BLOCKED"
-        logger.info(
-            '%s - endpoint "%s" with kwd %s',
-            w,
-            api_request.request_key,
-            api_request.kwd,
-        )
-        return valid
+        return await self._check_request(api_request)
 
     @cache_check_request
     async def _check_request(self, api_request: ESIRequest) -> bool:
@@ -672,6 +676,13 @@ class _RequestChecker:
         if "type_id" in api_request.params:
             type_id = api_request.params.get("type_id")
             valid = await self._check_request_type_id(type_id)
+
+        if not valid:
+            logger.debug(
+                'BLOCKED - endpoint_"%s": %s',
+                api_request.request_key,
+                api_request.kwd,
+            )
 
         return valid
 

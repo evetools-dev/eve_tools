@@ -9,7 +9,10 @@ from eve_tools.config import TOKEN_PATH
 from .application import Application
 from .sso.refresh_token import refresh_token
 from .sso.esi_oauth_native import esi_oauth_local
+from eve_tools.log import getLogger
 
+
+logger = getLogger(__name__)
 
 @dataclass
 class Token:
@@ -108,6 +111,7 @@ class ESITokens(object):
             token_.refresh_token = new_token_dict["refresh_token"]
             # character_name and clientId field should not change.
             self._save_flag = True
+        logger.debug("Refresh token successful")
 
     def generate(self) -> Token:
         """Generates new token for the Application.
@@ -143,7 +147,7 @@ class ESITokens(object):
             old_token.access_token = new_token_dict["access_token"]
             old_token.retrieve_time = new_token_dict["retrieve_time"]
             old_token.refresh_token = new_token_dict["refresh_token"]
-            return old_token
+            ret = old_token
         else:
             new_token = Token(
                 new_token_dict["access_token"],
@@ -154,7 +158,10 @@ class ESITokens(object):
                 self.clientId,
             )
             self.tokens.append(new_token)
-            return new_token
+            ret = new_token
+
+        logger.debug("Generate token successful")
+        return ret
 
     def save(self, **options) -> None:
         """Saves tokens to a local file.
@@ -181,6 +188,7 @@ class ESITokens(object):
 
         with open(TOKEN_PATH, "w") as all_tokens_fp:
             json.dump(all_tokens, all_tokens_fp)
+        logger.debug("Save ESITokens successful")
 
     def exist(self, cname: Optional[str] = None) -> bool:
         """Checks if a Token or tokens exist or not.

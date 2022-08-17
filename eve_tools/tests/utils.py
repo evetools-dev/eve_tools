@@ -1,4 +1,3 @@
-import logging
 import os
 import yaml
 from asyncio import get_event_loop
@@ -7,9 +6,9 @@ from typing import Callable, Coroutine, Union, Optional
 
 from eve_tools import api_cache
 from eve_tools.data.cache import make_cache_key
+from eve_tools.log import getLogger
 
-
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 class TestConfig:
@@ -75,13 +74,13 @@ class TestConfig:
     def _update_config(self, **d):
         """ "Updates test configuration both locally and for the instance."""
         self.config.update(d)
-        logger.debug("Test configuration updated: %s", str(d))
+        logger.info("Test configuration updated: %s", str(d))
         self.__save_config()
 
     def __save_config(self):
         with open(self._path, "w") as _f:
             yaml.dump(self.config, _f)
-            logger.debug("Test configuration saved to %s", self._path)
+            logger.info("Test configuration saved to %s", self._path)
 
     def __check_config(self):
         """Some simple checks for config variables.

@@ -3,13 +3,20 @@ import unittest
 import yaml
 
 from .utils import TestConfig
+from eve_tools.log import getLogger
+
+logger = getLogger("test_tests")
 
 
 class TestUtils(unittest.TestCase):
     local_file_name = "testconfig.yml"
     config_path = os.path.join(TestConfig.TESTDIR, local_file_name)
 
+    def setUp(self) -> None:
+        logger.debug("TEST running: %s", self.id())
+
     def test_config(self):
+        """Test TestConfig"""
         config = TestConfig(self.local_file_name)
         self.assertEqual(config._fname, self.local_file_name)
 
@@ -40,6 +47,8 @@ class TestUtils(unittest.TestCase):
         with self.assertRaises(ValueError):
             config.set(structure_name, 123)
 
-    def tearDown(self) -> None:
-        if os.path.exists(self.config_path):
-            os.remove(self.config_path)
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if os.path.exists(cls.config_path):
+            os.remove(cls.config_path)
+            logger.debug("TEST Test configuration removed: %s", cls.config_path)
