@@ -1,7 +1,6 @@
 import asyncio
 import aiohttp
 import copy
-import logging
 import os
 import pandas as pd
 from dataclasses import dataclass
@@ -66,7 +65,10 @@ class ESIResponse:
 class ESI(object):
     """ESI request client for API requests.
 
-    Simplifies ESI API requests and oauth process.
+    Contains ESI.request family for sending requests to ESI and deals with ESI OAuth process.
+
+    Note:
+        ESI class is singleton by design.
     """
 
     metaurl = "https://esi.evetech.net/latest"
@@ -83,23 +85,42 @@ class ESI(object):
         # and ClientSession.__del__ logs some messages, causing things like "Module open not found".
         # If put within ESI, ESI.__del__ will be run first, which closes session connections,
         # avoiding errors from aiohttp.
-        self._async_session = aiohttp.ClientSession(
+        self.__async_session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
         )  # default maximum 100 connections  # aiohttp advices not to create session per request
 
-        self._event_loop = asyncio.get_event_loop()
-
-        ### Exit flag
-        self._app_changed = False
+        self.__event_loop = asyncio.get_event_loop()
 
         ### Session record
         self._record_session = True  # default recording
         self._record: _SessionRecord = _SessionRecord()
 
         ### Request checker
-        self._request_checker = _RequestChecker()
+        self.__request_checker = _RequestChecker()
 
         logger.info("ESI instance initiated")
+
+    def __new__(cls):
+        """Singleton design."""
+        if not hasattr(cls, "__instance"):
+            cls.__instance = super(ESI, cls).__new__(cls)
+        else:
+            logger.debug("ESI instance copy used")
+        return cls.__instance
+
+    def __del__(self):
+        """Close ClientSession of the ESI instance."""
+        if self.__async_session is None:
+            return
+
+        if not self.__async_session.closed:
+            if self.__async_session._connector_owner:
+                self.__async_session._connector._close()  # silence deprecation warning
+            self.__async_session._connector = None
+
+        if not self.__event_loop.is_closed():
+            self.__event_loop.run_until_complete(asyncio.sleep(0))
+            self.__event_loop.close()
 
     @_session_recorder(fields="timer")
     def get(
@@ -172,8 +193,8 @@ class ESI(object):
             raises = kwd.pop("raises")
 
         if not async_loop:
-            logger.debug("REQUEST GET - %s w/k %s", key, str(kwd))
-            return self._event_loop.run_until_complete(
+            logger.info("REQUEST GET - %s w/k %s", key, str(kwd))
+            return self.__event_loop.run_until_complete(
                 self.request("get", key, raises=raises, **kwd)
             )
 
@@ -221,7 +242,7 @@ class ESI(object):
 
         recursive_looper(list(async_loop), kwd)
 
-        logger.debug(
+        logger.info(
             "REQUEST GET - %s on %s: %d tasks w/k %s",
             key,
             str(async_loop),
@@ -229,8 +250,8 @@ class ESI(object):
             str(kwd),
         )
 
-        # self._event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
-        self._event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
+        # self.__event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
+        self.__event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
 
         ret = []
         for task in tasks:
@@ -283,8 +304,8 @@ class ESI(object):
         >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
         """
         raises = kwd.pop("raises", True)
-        logger.debug("REQUEST HEAD - %s w/k %s", key, str(kwd))
-        return self._event_loop.run_until_complete(
+        logger.info("REQUEST HEAD - %s w/k %s", key, str(kwd))
+        return self.__event_loop.run_until_complete(
             self.request("head", key, raises=raises, **kwd)
         )
 
@@ -322,7 +343,7 @@ class ESI(object):
         See also:
             ESI.get(): sends asynchronous request GET to an API.
         """
-        self._check_key(key)
+        self.__check_key(key)
 
         api_request = self._metadata[key]
         if api_request.request_type not in ["get", "head"]:
@@ -332,7 +353,7 @@ class ESI(object):
 
         api_request.kwd = copy.deepcopy(kwd)
 
-        self._check_method(api_request, method)
+        self.__check_method(api_request, method)
 
         params = kwd.get("params", {})
         api_request.params.update(params)
@@ -350,14 +371,14 @@ class ESI(object):
                 else:
                     token = tokens[cname]
                 api_request.token = token
-                headers.update(self._get_auth_headers(token))
+                headers.update(self.__get_auth_headers(token))
 
         api_request.headers.update(headers)
 
         raises = kwd.pop("raises", None)
         checks = kwd.pop("checks", True)
 
-        self._parse_request_keywords(api_request, kwd)
+        self.__parse_request_keywords(api_request, kwd)
 
         # Using asyncio.run() is problematic because it creates a new event loop (or maybe other advanced/mysterious reasons?).
         # For my application (web request), aiohttp kind of like non-blocking accept in C,
@@ -394,12 +415,12 @@ class ESI(object):
         """
         # Check (predict) if api_request sent will cause ESI error.
         # This reduces 400, 404, and 403 errors.
-        if checks and not await self._request_checker(api_request):
+        if checks and not await self.__request_checker(api_request):
             return None
 
         # no encoding: "4-HWF" stays what it is
         if method == "get":
-            async with self._async_session.get(
+            async with self.__async_session.get(
                 api_request.url, params=api_request.params, headers=api_request.headers
             ) as req:
                 data = await req.json()
@@ -415,7 +436,7 @@ class ESI(object):
                 )
 
         elif method == "head":
-            async with self._async_session.head(
+            async with self.__async_session.head(
                 api_request.url, params=api_request.params, headers=api_request.headers
             ) as req:
                 resp = ESIResponse(
@@ -468,24 +489,23 @@ class ESI(object):
         if update_flag:
             new_app = Application(clientId, scope, callbackURL)
             self.apps.append(new_app)
-            self._app_changed = True
             self.apps.save()
 
         with ESITokens(new_app) as token:
             token.generate()
 
-    def _get_auth_headers(self, token: Token) -> dict:
+    def __get_auth_headers(self, token: Token) -> dict:
         # Read from local token file and append to request headers.
         access_token = token.access_token
         auth_headers = {"Authorization": "Bearer {}".format(access_token)}
         return auth_headers
 
-    def _check_key(self, key: str) -> None:
+    def __check_key(self, key: str) -> None:
         if key not in self._metadata.paths:
             logger.error("Invalid request key: %s", key)
             raise ValueError(f"{key} is not a valid request key.")
 
-    def _check_method(self, api_request: ESIRequest, method: str) -> None:
+    def __check_method(self, api_request: ESIRequest, method: str) -> None:
         """Checks if method is supported by the ESIRequest.
         Assume only one request_type (one of "get", "post", etc.) for api_request.
         """
@@ -501,7 +521,7 @@ class ESI(object):
             f"Request method {method} is not supported by {api_request.request_key} request."
         )
 
-    def _parse_request_keywords(self, api_request: ESIRequest, keywords: dict) -> None:
+    def __parse_request_keywords(self, api_request: ESIRequest, keywords: dict) -> None:
         """Parses and checks user provided parameters.
 
         Checks fields in keywords if necessary parameters are given.
@@ -540,7 +560,7 @@ class ESI(object):
         for api_param_ in api_request.parameters:
             if api_param_._in == "path":
                 key = api_param_.name
-                value = self._parse_request_keywords_in_path(
+                value = self.__parse_request_keywords_in_path(
                     keywords, key, api_param_.dtype, cid
                 )
                 path_params.update({key: value})
@@ -548,7 +568,7 @@ class ESI(object):
             elif api_param_._in == "query":
                 default = api_param_.default
                 key = api_param_.name
-                value = self._parse_request_keywords_in_query(
+                value = self.__parse_request_keywords_in_query(
                     keywords, key, api_param_.required, api_param_.dtype
                 )
                 if value is not None:
@@ -558,7 +578,7 @@ class ESI(object):
             elif api_param_._in == "header":  # not "headers"
                 # usually not reached
                 key = api_param_.name
-                value = self._parse_request_keywords_in_header(
+                value = self.__parse_request_keywords_in_header(
                     headers, key, api_param_.required, api_param_.dtype
                 )
                 if value is not None:
@@ -571,7 +591,7 @@ class ESI(object):
         api_request.url = self.metaurl + url  # urljoin is difficult to deal with...
 
     @staticmethod
-    def _parse_request_keywords_in_path(
+    def __parse_request_keywords_in_path(
         where: dict, key: str, dtype: str, cid: int = 0
     ) -> str:
         # dtype is not checked yet. Checking it needs to parse "schema" field and integerate into "dtype",
@@ -586,7 +606,7 @@ class ESI(object):
         return value
 
     @staticmethod
-    def _parse_request_keywords_in_query(
+    def __parse_request_keywords_in_query(
         where: dict, key: str, required: bool, dtype: str
     ) -> str:
         value = where.pop(key, None)
@@ -609,7 +629,7 @@ class ESI(object):
             return None
 
     @staticmethod
-    def _parse_request_keywords_in_header(
+    def __parse_request_keywords_in_header(
         where: dict, key: str, required: bool, dtype: str
     ) -> str:
         value = where.pop(key, None)
@@ -618,20 +638,6 @@ class ESI(object):
         if value is None:
             raise KeyError(f'Missing key "{key}" in keywords.')
         return value
-
-    def __del__(self):
-        """Close ClientSession of the ESI instance."""
-        if self._async_session is None:
-            return
-
-        if not self._async_session.closed:
-            if self._async_session._connector_owner:
-                self._async_session._connector._close()  # silence deprecation warning
-            self._async_session._connector = None
-
-        if not self._event_loop.is_closed():
-            self._event_loop.run_until_complete(asyncio.sleep(0))
-            self._event_loop.close()
 
     def _start_record(self):
         """Starts recording useful response info."""
