@@ -1,6 +1,7 @@
 import copy
 import time
 from aiohttp import ClientResponseError
+from asyncio.exceptions import TimeoutError
 from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate
@@ -73,21 +74,27 @@ class ESIRequestError:
 
                     self._global_error_remain[0] -= 1
 
-                    # Raises if needed
                     if attempts == 0:
                         logger.error("FAILED: %s | attempts left: %s", exc, attempts)
-                        if self.raises is True:
+                    else:
+                        logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
+                except TimeoutError as exc:  # asyncio.exceptions.TimeoutError has empty exc
+                    attempts = 0
+                    logger.error("FAILED: asyncio.exceptions.TimeoutError")
+
+                 # raise or return None
+                if attempts == 0:
+                    if self.raises is True:
+                        raise
+                    if self.raises is False:
+                        return None
+                    if self.raises is None:
+                        # Why 5?
+                        # If set to 0, ESI will always give 420 error, not being informative.
+                        if self._global_error_remain[0] <= 5:
                             raise
-                        if self.raises is False:
+                        else:
                             return None
-                        if self.raises is None:
-                            # Why 5?
-                            # If set to 0, ESI will always give 420 error, not being informative.
-                            if self._global_error_remain[0] <= 5:
-                                raise
-                            if self._global_error_remain[0] > 5:
-                                return None
-                    logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
             return ret
 
         return wrapped_retry
