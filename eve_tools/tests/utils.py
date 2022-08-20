@@ -106,6 +106,10 @@ class TestInit:
 
     config = test_config
 
+    @property
+    def configured() -> bool:
+        return TestInit.config.structure_name is None and TestInit.config.cname is None
+
 
 def request_from_ESI(esi_func: Union[Callable, Coroutine], *args, **kwd):
     """Enforce a function not to use cache.

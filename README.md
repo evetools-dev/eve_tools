@@ -60,4 +60,15 @@ unittest.main()
 
 You would see around 20+ tests running. Internet connection is required.
 If you witness any error during testing, please [email me](hb.evetools@gmail.com). 
+
+If you see some tests being skipped: 
+```
+...ss........ss.....
+
+Ran 24 tests in 16.00s
+
+OK (skipped=4)
+```
+This means your test configuration is incorrect (config does not have field ``structure_name`` and ``cname``). Use ``test_config.set()`` to configure your tests and rerun tests. You should see no skipping.
+
 Feel free to leave your in-game character name. I will send you some isk if your feedback helps to improve this project.

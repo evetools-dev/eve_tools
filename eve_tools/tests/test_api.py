@@ -15,6 +15,7 @@ class TestMarket(unittest.TestCase, TestInit):
     def setUp(self) -> None:
         logger.debug("TEST running: %s", self.id())
 
+    @unittest.skipIf(TestInit.configured, "test no configured")
     def test_get_structure_types(self):
         resp = request_from_ESI(
             get_structure_types, self.config.structure_name, self.config.cname
@@ -216,6 +217,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
+    @unittest.skipIf(TestInit.configured, "test no configured")
     def test_get_structure_market(self):
         resp: pd.DataFrame = request_from_ESI(
             get_structure_market, self.config.structure_name, self.config.cname
@@ -262,6 +264,7 @@ class TestSearch(unittest.TestCase, TestInit):
         self.assertEqual(resp, 99003581)
         self.assertEqual(resp, resp_cache)
 
+    @unittest.skipIf(TestInit.configured, "test no configured")
     def test_search_structure_id(self):
         resp = request_from_ESI(
             search_structure_id, self.config.structure_name, self.config.cname
@@ -270,6 +273,7 @@ class TestSearch(unittest.TestCase, TestInit):
         self.assertEqual(resp, resp_cache)
         self.assertGreater(resp, 1000000000000)
 
+    @unittest.skipIf(TestInit.configured, "test no configured")
     def test_search_structure(self):
         sid = search_structure_id(self.config.structure_name, self.config.cname)
         resp: Structure = request_from_ESI(search_structure, sid)
