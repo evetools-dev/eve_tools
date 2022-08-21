@@ -1,6 +1,7 @@
 import copy
 import time
 from aiohttp import ClientResponseError
+from aiohttp.client_exceptions import ServerDisconnectedError
 from asyncio.exceptions import TimeoutError
 from dataclasses import dataclass
 from datetime import datetime
@@ -74,13 +75,13 @@ class ESIRequestError:
 
                     self._global_error_remain[0] -= 1
 
-                    if attempts == 0:
-                        logger.error("FAILED: %s | attempts left: %s", exc, attempts)
-                    else:
-                        logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
+                    self.__log(exc, attempts)
                 except TimeoutError as exc:  # asyncio.exceptions.TimeoutError has empty exc
                     attempts = 0
                     logger.error("FAILED: asyncio.exceptions.TimeoutError")
+                except ServerDisconnectedError as exc:
+                    attempts -= 1
+                    self.__log(exc, attempts)
 
                  # raise or return None
                 if attempts == 0:
@@ -102,6 +103,13 @@ class ESIRequestError:
     def __call__(self, func):
 
         return self.wrapper_retry(func)
+
+    @staticmethod
+    def __log(exc, attempts: int):
+        if attempts == 0:
+            logger.error("FAILED: %s | attempts left: %s", exc, attempts)
+        else:
+            logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
 
 
 @dataclass
