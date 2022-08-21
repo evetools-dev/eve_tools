@@ -23,14 +23,16 @@ class TestConfig:
     Example usage:
     >>> import unittest
     >>> from eve_tools.tests import *
-    >>> test_config.set(structure_name="4-HWWF - WinterCo. Central Station", cname="Hanbie Serine")
+    >>> test_config.set(structure_name="a player's structure", cname="a character with docking access to the structure")
     >>> unittest.main()
     ............... (tests start running)
     """
 
     TESTDIR = os.path.realpath(os.path.dirname(__file__))
 
-    def __init__(self, local_file_name: str = "config.yml"):
+    def __init__(self, local_file_name: str = ...):
+        if local_file_name is Ellipsis:
+            local_file_name = "config.yml"
         self._fname = local_file_name
         self._path = os.path.join(self.TESTDIR, self._fname)
         self.config = {}
@@ -40,12 +42,30 @@ class TestConfig:
 
         if self.config is None:
             self.config = {}
-        self.structure_name = self.config.get("structure_name")
-        self.cname = self.config.get("cname")
 
     def __call__(self):
         """Gets tests configuration."""
         return self.config
+
+    @property
+    def structure_name(self) -> str:
+        return self.config.get("structure_name")
+
+    @property
+    def cname(self) -> str:
+        return self.config.get("cname")
+
+    @structure_name.setter
+    def structure_name(self, _s: str):
+        self.config["structure_name"] = _s
+
+    @cname.setter
+    def cname(self, _c: str):
+        self.config["cname"] = _c
+
+    @property
+    def configured(self) -> bool:
+        return self.structure_name is not None and self.cname is not None
 
     def set(self, structure_name: Optional[str] = None, cname: Optional[str] = None):
         """Sets configuration for testing.
@@ -64,17 +84,22 @@ class TestConfig:
             cname: str
                 A character that has docking and market access to the structure you entered.
         """
+        _d = {}
         if structure_name is not None:
             self.structure_name = structure_name
+            _d["structure_name"] = structure_name
         if cname is not None:
             self.cname = cname
+            _d["cname"] = cname
+        logger.info("Test configuration set: %s", str(_d))
         self.__check_config()
-        self._update_config(structure_name=structure_name, cname=cname)
+        self.__save_config()
 
-    def _update_config(self, **d):
-        """ "Updates test configuration both locally and for the instance."""
+    def update(self, **d):
+        """Updates test configuration both locally and for the instance."""
         self.config.update(d)
         logger.info("Test configuration updated: %s", str(d))
+        self.__check_config()
         self.__save_config()
 
     def __save_config(self):
@@ -105,10 +130,6 @@ class TestInit:
     TESTDIR = os.path.realpath(os.path.dirname(__file__))
 
     config = test_config
-
-    @property
-    def configured() -> bool:
-        return TestInit.config.structure_name is None and TestInit.config.cname is None
 
 
 def request_from_ESI(esi_func: Union[Callable, Coroutine], *args, **kwd):
