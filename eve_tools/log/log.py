@@ -1,5 +1,7 @@
 import os
 import logging
+import sys
+from concurrent_log_handler import ConcurrentRotatingFileHandler
 from logging import Logger
 from logging.handlers import RotatingFileHandler
 from typing import Optional
@@ -9,6 +11,8 @@ from eve_tools.config import LOGLEVEL, LOGFILE
 FORMATTER = logging.Formatter(
     "%(asctime)s %(levelname)s %(name)s@%(lineno)d: %(message)s"
 )
+MAXBYTES = 5 * 1024 * 1024
+BACKUPCOUNT = 10
 
 
 # Log levels:
@@ -49,9 +53,13 @@ def getLogger(
     if filename is Ellipsis:
         filename = LOGFILE
     filename = os.path.realpath(os.path.join(os.path.dirname(__file__), filename))
-    file_handler = RotatingFileHandler(
-        filename, maxBytes=5 * 1024 * 1024, backupCount=5  # 5MB * 5
-    )
+
+    if sys.platform == "win32":
+        file_handler = ConcurrentRotatingFileHandler(filename, maxBytes=MAXBYTES, backupCount=BACKUPCOUNT, delay=True)
+    else:  # RotatingFileHandler works on linux/darwin
+        file_handler = RotatingFileHandler(
+            filename, maxBytes=MAXBYTES, backupCount=BACKUPCOUNT, delay=True  # 5MB * 10
+        )
     file_handler.setLevel(level)
     file_handler.setFormatter(FORMATTER)
 
