@@ -130,11 +130,11 @@ class SqliteCache(BaseCache):
             expires = datetime(*parsedate(expires)[:6])
 
         _h = hash_key(key)
-        self.c.cursor.execute(
+        self.c.execute(
             f"INSERT OR REPLACE INTO {self.table} VALUES(?,?,?)",
             (_h, pickle.dumps(value), expires),
         )
-        self.c.conn.commit()
+        self.c.commit()
         logger.debug("Cache entry set: %s", _h)
 
     def get(self, key, default=None):
@@ -147,11 +147,11 @@ class SqliteCache(BaseCache):
             key: An object returned from make_cache_key(), which is pickled and hashed using hash_key().
             default: If cache returns nothing, returns a default value. Default None.
         """
-        self.c.cursor.execute(f"DELETE FROM {self.table} WHERE expires < DATE('now')")
-        self.c.conn.commit()
+        self.c.execute(f"DELETE FROM {self.table} WHERE expires < DATE('now')")
+        self.c.commit()
 
         _h = hash_key(key)
-        row = self.c.cursor.execute(
+        row = self.c.execute(
             f"SELECT * FROM {self.table} WHERE key=?", (_h,)
         ).fetchone()
         if not row:
@@ -173,8 +173,8 @@ class SqliteCache(BaseCache):
     def evict(self, key):
         """Deletes cache entry with key. Useful in testing."""
         _h = hash_key(key)
-        self.c.cursor.execute(f"DELETE FROM {self.table} WHERE key=?", (_h,))
-        self.c.conn.commit()
+        self.c.execute(f"DELETE FROM {self.table} WHERE key=?", (_h,))
+        self.c.commit()
         logger.debug("Cache entry evicted: %s", _h)
 
 

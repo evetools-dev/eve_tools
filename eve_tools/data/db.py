@@ -1,6 +1,8 @@
 import os
 import sqlite3
+import time
 import yaml
+from dataclasses import dataclass
 
 from eve_tools.config import DATA_DIR
 from eve_tools.log import getLogger
@@ -35,6 +37,54 @@ history_columns = [
 ]
 
 
+@dataclass(repr=False)
+class CMDInfo:
+    """Stores statistics for a database keyword, such as SELECT, DELETE, etc."""
+
+    _cmd: str
+    _cnt: int = 0
+    _t: float = 0.0  # unit: nanosecond
+
+    def __repr__(self) -> str:
+        return f"(calls={self._cnt}, time={self._t / 1e9:.7f})"  # 7f because windows time has max 1e-07 resolution
+
+
+@dataclass(init=False)
+class _ESIDBStats:
+    """Stores statistics for a database instance."""
+
+    def __init__(self, db_name: str) -> None:
+        self.db_name = db_name
+        self.calls: int = 0
+
+    def increment(self, cmd: str, _t: float):
+        """Increments statistics of the database instance.
+
+        Args:
+            cmd: str
+                A SQL keyword, such as SELECT or INSERT.
+            _t: float
+                Time spent for this db command. Unit in nanosecond.
+        """
+        self.calls += 1
+
+        # If SQL query involves transaction, stored procedure, etc., they probably start with "BEGIN".
+        # This is beyond the scope of this class design. You might see something like BEGIN=(calls=1, time=xxx).
+        info: CMDInfo = getattr(
+            self, cmd, CMDInfo(cmd)
+        )  # cmd_info = self.SELECT || CMDInfo("SELECT")
+        info._cnt += 1
+        info._t += _t
+        if not hasattr(self, cmd):
+            setattr(self, cmd, info)
+
+    def __repr__(self) -> str:
+        nodef_f_vals = ((f, getattr(self, f)) for f in self.__dict__)
+
+        nodef_f_repr = ", ".join(f"{name}={value}" for name, value in nodef_f_vals)
+        return f"{self.__class__.__name__}({nodef_f_repr})"
+
+
 class ESIDBManager:
     """Manage sqlite3 database for ESI api.
 
@@ -57,27 +107,55 @@ class ESIDBManager:
         self.schema_name = schema_name
         if schema_name is None:
             self.schema_name = db_name
-        
-        self.conn = sqlite3.connect(os.path.join(parent_dir, db_name + ".db"))
-        self.cursor = self.conn.cursor()
+
+        self.db_path = os.path.join(parent_dir, db_name + ".db")
+        self.conn = sqlite3.connect(self.db_path)  # can't use isolation_level=None
+        self._cursor = self.conn.cursor()
 
         self.__init_tables()
         self.__init_columns()
-        logger.info("DB initiated with schema %s: %s @ %s", self.schema_name, db_name, parent_dir)
+        self.__init_stats()
+        logger.info(
+            "DB initiated with schema %s: %s @ %s",
+            self.schema_name,
+            db_name,
+            parent_dir,
+        )
 
     def __del__(self):
-        self.cursor.close()
+        self._cursor.close()
         self.conn.close()
+
+    @property
+    def stats(self) -> _ESIDBStats:
+        return self._stats
+
+    def execute(self, __sql: str, __parameters=...) -> sqlite3.Cursor:
+        """Wraps cursor.execute with custom add-ons.
+        Usage is the same (or should be the same) as cursor.execute() method of sqlite3.Cursor class."""
+        cmd = __sql.split()[0]
+        _s = time.perf_counter_ns()  # perf_counter has 1e-07 resolution in win32, lowest in time methods
+        if __parameters is Ellipsis:
+            cursor = self._cursor.execute(__sql)
+        else:
+            cursor = self._cursor.execute(__sql, __parameters)
+        _t = time.perf_counter_ns() - _s
+        self._stats.increment(cmd, _t)
+        return cursor
+
+    def commit(self) -> None:
+        """Same as connection.commit() from sqlite3.Connection class."""
+        self.conn.commit()
 
     def clear_table(self, table_name: str):
         """Clears a table using DELETE FROM table"""
-        self.cursor.execute(f"DELETE FROM {table_name};")
+        self._cursor.execute(f"DELETE FROM {table_name};")
         self.conn.commit()
         logger.debug("Clear table %s-%s successful", self.db_name, table_name)
 
     def drop_table(self, table_name: str):
         """Drops a table using DROP TABLE table"""
-        self.cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
+        self._cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
         self.conn.commit()
         logger.debug("Drop table %s-%s successful", self.db_name, table_name)
 
@@ -134,4 +212,7 @@ class ESIDBManager:
         for table in self.tables:
             table_config = self._dbconfig.get(table)
             schema = table_config.get("schema")
-            self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {table} ({schema});")
+            self._cursor.execute(f"CREATE TABLE IF NOT EXISTS {table} ({schema});")
+
+    def __init_stats(self):
+        self._stats: _ESIDBStats = _ESIDBStats(self.db_name)
