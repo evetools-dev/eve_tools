@@ -10,6 +10,7 @@ from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
 from eve_tools.data import CacheDB, SqliteCache
 from eve_tools.tests.utils import request_from_ESI
 from eve_tools.log import getLogger
+from .utils import internet_on
 
 logger = getLogger("test_esi")
 
@@ -18,6 +19,7 @@ class TestESI(unittest.TestCase):
     def setUp(self) -> None:
         logger.debug("TEST running: %s", self.id())
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_api_session_recorder(self):
         """Tests ESI._start_api_session, ESI._end_api_session, ESI._clear_api_record, ESI._api_session_record"""
         # Test: clear session
@@ -224,6 +226,7 @@ class TestRequestChecker(unittest.TestCase):
     checker = _RequestChecker()
     checker_cache = SqliteCache(CacheDB, "checker_cache")
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_check_type_id(self):
         """Tests _RequestChecker._check_request_type_id()."""
         type_id = 12005

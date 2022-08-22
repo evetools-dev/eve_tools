@@ -1,4 +1,5 @@
 import os
+import socket
 import yaml
 from asyncio import get_event_loop
 from inspect import iscoroutinefunction
@@ -152,3 +153,21 @@ def request_from_ESI(esi_func: Union[Callable, Coroutine], *args, **kwd):
     else:
         raise NotImplemented
     return resp
+
+
+def internet_on() -> bool:
+    """Has internet connection or not.
+
+    Uses Google's public DNS server with port 53/tcp to check connectivity.
+    With a good internet connection, this method takes milliseconds to complete.
+    If internet is not connected, some tests will be skipped.
+
+    Retrieved from: https://stackoverflow.com/a/33117579/18191767
+    """
+    try:
+        socket.setdefaulttimeout(3)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+        return True
+    except socket.error as ex:
+        logger.warning(ex)  # tests should run regardless of connectivity
+        return False

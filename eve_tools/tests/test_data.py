@@ -63,6 +63,9 @@ class TestCache(unittest.TestCase):
         self.assertEqual(instance.hits, 1)
         self.assertEqual(instance.miss, 1)
 
+        # Clean up
+        cache.evict(key)
+
     @classmethod
     def tearDownClass(cls) -> None:
         cls.TESTDB.clear_db()
