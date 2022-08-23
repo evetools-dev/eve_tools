@@ -141,15 +141,12 @@ class SqliteCache(BaseCache):
         """Gets the value from cache.
 
         Attempts to return value with key from cache. A default value is returned if unsuccessful.
-        Deletes all expired keys everytime get() is called.
+        Checks if db entry is expired and delete if necessary.
 
         Args:
             key: An object returned from make_cache_key(), which is pickled and hashed using hash_key().
             default: If cache returns nothing, returns a default value. Default None.
         """
-        self.c.execute(f"DELETE FROM {self.table} WHERE expires < DATE('now')")
-        self.c.commit()
-
         _h = hash_key(key)
         row = self.c.execute(
             f"SELECT * FROM {self.table} WHERE key=?", (_h,)
@@ -161,8 +158,10 @@ class SqliteCache(BaseCache):
 
         expires = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
         if datetime.utcnow() > expires:
-            logger.debug("Cache MISS: %s", _h)
+            logger.debug("Cache EXPIRED: %s", _h)
             self.miss += 1
+            self.c.execute(f"DELETE FROM {self.table} WHERE key=?", (_h,))
+            self.c.commit()
             return default  # expired
         else:
             self._last_used = _h
