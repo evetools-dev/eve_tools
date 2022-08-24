@@ -2,17 +2,26 @@ import pandas as pd
 import time
 import unittest
 
-
 from eve_tools.api import *
 from eve_tools.api.search import InvType, SolarSystem, Station, Structure
 from eve_tools.api.utils import reduce_volume
-from .utils import TestInit, request_from_ESI
+from eve_tools.log import getLogger
+from .utils import TestInit, request_from_ESI, internet_on
+
+logger = getLogger("test_api")
 
 
 class TestMarket(unittest.TestCase, TestInit):
+    def setUp(self) -> None:
+        logger.info("TEST running: %s", self.id())
+
+    @unittest.skipUnless(TestInit.config.configured, "test no configured")
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_structure_types(self):
-        resp = request_from_ESI(get_structure_types, self.structure_name, self.cname)
-        resp_cache = get_structure_types(self.structure_name, self.cname)
+        resp = request_from_ESI(
+            get_structure_types, self.config.structure_name, self.config.cname
+        )
+        resp_cache = get_structure_types(self.config.structure_name, self.config.cname)
 
         # Test: api returns correct value
         self.assertGreater(len(resp), 2)  # resp contains some type_id(s)
@@ -21,7 +30,7 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertIn(1405, resp)  # 1405: inertial stabilizer
 
         # Test: if sid given, cname is optional
-        sid = search_structure_id(self.structure_name, self.cname)
+        sid = search_structure_id(self.config.structure_name, self.config.cname)
         resp_sid = request_from_ESI(get_structure_types, sid, "some weird cname")
         self.assertEqual(set(resp), set(resp_sid))
 
@@ -29,6 +38,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertEqual(len(resp), len(resp_cache))
         self.assertEqual(set(resp), set(resp_cache))
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_region_types_esi(self):
         resp = request_from_ESI(get_region_types, 10000002, "esi")
         resp_cache = get_region_types(10000002, "esi")
@@ -47,6 +57,7 @@ class TestMarket(unittest.TestCase, TestInit):
 
     # test_get_region_types_db(self)
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_type_history_no_reduce(self):
         resp: pd.DataFrame = request_from_ESI(get_type_history, 10000002, 12005)
         resp_cache: pd.DataFrame = get_type_history(10000002, 12005)
@@ -77,6 +88,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_type_history_with_reduce(self):
         resp: pd.DataFrame = request_from_ESI(
             get_type_history, 10000002, 12005, reduce_volume
@@ -133,6 +145,7 @@ class TestMarket(unittest.TestCase, TestInit):
     #     self.assertIn(979, resp["type_id"].values)
     #     self.assertTrue(resp.equals(resp_cache))
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_station_market_one_type(self):
         station_name = "Jita IV - Moon 4 - Caldari Navy Assembly Plant"
         resp: pd.DataFrame = request_from_ESI(
@@ -167,6 +180,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_station_market_multiple_types(self):
         station_name = "Jita IV - Moon 4 - Caldari Navy Assembly Plant"
         resp: pd.DataFrame = request_from_ESI(get_station_market, station_name)
@@ -196,6 +210,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_region_market(self):
         resp: pd.DataFrame = request_from_ESI(get_region_market, "The Forge")
         resp_cache = get_region_market("The Forge")
@@ -209,11 +224,13 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
+    @unittest.skipUnless(TestInit.config.configured, "test no configured")
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_structure_market(self):
         resp: pd.DataFrame = request_from_ESI(
-            get_structure_market, self.structure_name, self.cname
+            get_structure_market, self.config.structure_name, self.config.cname
         )
-        resp_cache = get_structure_market(self.structure_name, self.cname)
+        resp_cache = get_structure_market(self.config.structure_name, self.config.cname)
 
         # Test: api returns correct value
         self.assertGreater(len(resp), 2)  # resp contains some orders
@@ -223,7 +240,7 @@ class TestMarket(unittest.TestCase, TestInit):
             self.assertIn(1405, resp["type_id"].values)  # 1405: inertial stabilizer
 
         # Test: cname is optional
-        sid = search_structure_id(self.structure_name, self.cname)
+        sid = search_structure_id(self.config.structure_name, self.config.cname)
         resp_sid = request_from_ESI(get_structure_market, sid, "some weird cname")
         self.assertEqual(set(resp), set(resp_sid))
 
@@ -233,12 +250,13 @@ class TestMarket(unittest.TestCase, TestInit):
 
 
 class TestSearch(unittest.TestCase, TestInit):
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_search_id(self):
         """Only test categories not defined in other search functions."""
         # Test: invalid category
         with self.assertRaises(ValueError):
             request_from_ESI(search_id, "abc", "category not exist")
-        
+
         # Test: no record
         with self.assertRaises(ValueError):
             request_from_ESI(search_id, "Hanbie Seri", "character")
@@ -255,14 +273,20 @@ class TestSearch(unittest.TestCase, TestInit):
         self.assertEqual(resp, 99003581)
         self.assertEqual(resp, resp_cache)
 
+    @unittest.skipUnless(TestInit.config.configured, "test no configured")
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_search_structure_id(self):
-        resp = request_from_ESI(search_structure_id, self.structure_name, self.cname)
-        resp_cache = search_structure_id(self.structure_name, self.cname)
+        resp = request_from_ESI(
+            search_structure_id, self.config.structure_name, self.config.cname
+        )
+        resp_cache = search_structure_id(self.config.structure_name, self.config.cname)
         self.assertEqual(resp, resp_cache)
         self.assertGreater(resp, 1000000000000)
-    
+
+    @unittest.skipUnless(TestInit.config.configured, "test no configured")
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_search_structure(self):
-        sid = search_structure_id(self.structure_name, self.cname)
+        sid = search_structure_id(self.config.structure_name, self.config.cname)
         resp: Structure = request_from_ESI(search_structure, sid)
         resp_cache = search_structure(sid)
         self.assertEqual(resp, resp_cache)

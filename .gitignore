@@ -2,9 +2,12 @@
 *.csv
 *.json
 !application.json
-*.log
+*.log*
 *.db
 *.vscode
+config.yml
+*-journal
+*.*.lock
 
 # Distribution files # 
 dist
@@ -14,6 +17,7 @@ dist
 # Python files #
 main.py
 __pycache__
+abc.py
 
 # doc #
 doc/build
