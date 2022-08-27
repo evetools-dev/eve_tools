@@ -61,6 +61,7 @@ class ESIRequestError:
 
             success = False
             ret = None
+            error = None
             while not success and attempts > 0:
                 try:
                     ret = await func(_esi_self, *_args, **_kwd)  # ESIResponse instance
@@ -76,17 +77,20 @@ class ESIRequestError:
                     self._global_error_remain[0] -= 1
 
                     self.__log(exc, attempts)
+                    error = exc
                 except TimeoutError as exc:  # asyncio.exceptions.TimeoutError has empty exc
                     attempts = 0
                     logger.error("FAILED: asyncio.exceptions.TimeoutError")
+                    error = exc
                 except ServerDisconnectedError as exc:
                     attempts -= 1
                     self.__log(exc, attempts)
+                    error = exc
 
                  # raise or return None
                 if attempts == 0:
                     if self.raises is True:
-                        raise
+                        raise error from None
                     if self.raises is False:
                         return None
                     if self.raises is None:
