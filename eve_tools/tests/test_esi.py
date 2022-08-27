@@ -3,10 +3,10 @@ from aiohttp import ClientResponseError
 from datetime import datetime
 
 from eve_tools.ESI import ESIClient
-from eve_tools.ESI.metadata import ESIMetadata, ESIRequest
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
 from eve_tools.ESI.esi import _RequestChecker
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
+from eve_tools.exceptions import InvalidRequestError
 from eve_tools.data import CacheDB, SqliteCache
 from eve_tools.tests.utils import request_from_ESI
 from eve_tools.log import getLogger
@@ -223,8 +223,9 @@ class TestESI(unittest.TestCase):
 
 
 class TestRequestChecker(unittest.TestCase):
-    checker = _RequestChecker()
-    checker_cache = SqliteCache(CacheDB, "checker_cache")
+    def setUp(self) -> None:
+        self.checker = _RequestChecker()
+        self.checker_cache = SqliteCache(CacheDB, "checker_cache")
 
     @unittest.skipUnless(internet_on(), "no internet connection")
     def test_check_type_id(self):
@@ -234,18 +235,41 @@ class TestRequestChecker(unittest.TestCase):
             self.checker._check_request_type_id, type_id, cache=self.checker_cache
         )
         self.assertTrue(res)
+        self.assertEqual(self.checker.requests, 1)
 
         type_id = 12007  # blocked: not a type_id
         res = request_from_ESI(
             self.checker._check_request_type_id, type_id, cache=self.checker_cache
         )
         self.assertFalse(res)
+        self.assertEqual(self.checker.requests, 1)
 
         type_id = 63715  # blocked: ESI endpoint
         res = request_from_ESI(
             self.checker._check_request_type_id, type_id, cache=self.checker_cache
         )
         self.assertFalse(res)
+        self.assertEqual(self.checker.requests, 2)  # request sent
+
+        # Test: raise
+        type_id = 12007
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.get(
+                "/markets/{region_id}/orders/",
+                region_id=10000002,
+                type_id=type_id,
+                order_type="all",
+            )
+
+        self.assertIsNone(
+            ESIClient.get(
+                "/markets/{region_id}/orders/",
+                region_id=10000002,
+                type_id=type_id,
+                order_type="all",
+                raises=False,
+            )
+        )
 
 
 class TestSSO(unittest.TestCase):
