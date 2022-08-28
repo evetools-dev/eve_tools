@@ -12,6 +12,9 @@ from .token import Token
 
 logger = getLogger(__name__)
 
+PARAM_DEFAULT = {"order_type": "all"}
+
+
 @dataclass
 class ESIRequest:
     """Holds information of a request to ESI.
@@ -112,7 +115,7 @@ class ESIMetadata(object):
         return ESIRequest(request_key, request_type, parameters, security)
 
     def __setitem__(self, key: Any, value: Any):
-        raise TypeError("ESIMetadata is not writable")
+        raise NotImplementedError("ESIMetadata is not writable")
 
     def _parse_parameters(self, body: dict) -> ESIParams:
         """Parse parameters of the metadata for a request.
@@ -135,14 +138,17 @@ class ESIMetadata(object):
                     params.append(param_)
                 continue
 
-            # construct Param class
+            # Construct Param class
             # Param.default is only present in meta parameters.
+            # Some params should have default value but absent in meta parameters,
+            # which are further defined in PARAM_DEFAULT dictionary.
             params.append(
                 Param(
-                    param["name"],
-                    param["in"],
-                    param.get("required", False),
-                    param.get("type", ""),
+                    name=param["name"],
+                    _in=param["in"],
+                    required=param.get("required", False),
+                    dtype=param.get("type", ""),
+                    default=PARAM_DEFAULT.get(param["name"]),
                 )
             )
 

@@ -584,7 +584,7 @@ class ESI(object):
                 default = api_param_.default
                 key = api_param_.name
                 value = self.__parse_request_keywords_in_query(
-                    keywords, key, api_param_.required, api_param_.dtype
+                    keywords, key, api_param_.required, api_param_.default, api_param_.dtype
                 )
                 if value is not None:
                     query_params.update({key: value})  # update if value is given
@@ -622,7 +622,7 @@ class ESI(object):
 
     @staticmethod
     def __parse_request_keywords_in_query(
-        where: dict, key: str, required: bool, dtype: str
+        where: dict, key: str, required: bool, default, dtype: str
     ) -> str:
         value = where.pop(key, None)
         params = where.get("params")
@@ -633,15 +633,15 @@ class ESI(object):
         if value and value2:
             raise KeyError(f'Duplicate key "{key}" in both keywords and params.')
 
-        if value is None and value2 is None and required:
+        if value is None and value2 is None and required and default is None:
             raise KeyError(f'Missing key "{key}" in keywords.')
 
+        if value is None and value2 is None:
+            return default
         if value is not None:
             return value
-        elif value2 is not None:
+        if value2 is not None:
             return value2
-        else:
-            return None
 
     @staticmethod
     def __parse_request_keywords_in_header(
