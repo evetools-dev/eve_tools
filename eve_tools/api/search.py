@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 import pandas as pd
+import requests
 
 from .utils import cache
 from eve_tools.ESI import ESIClient
@@ -546,3 +547,99 @@ def search_type_id(search: str) -> int:
 
     invType = invTypes.loc[typeName == search]
     return int(invType["typeID"])
+
+
+@cache(expires=24 * 3600 * 30)
+def search_station_by_name(system_id: int, search: str):
+    """Uses system id input and station name/description to search all stations in that system for a match. 
+    Then returns the station id and name/description. Use search_id function above to find ID """ 
+    """
+
+    Args:
+        system_id: int, search: str
+            Requires knowing system id and at least a partical station description
+            Example, Jita system, search_station_by_name(system_id=30000142, search="Caldari Navy")
+    
+    Returns:
+        A list of tupes in the format, [(system id, description),]
+
+    Raises:
+        ValueError: Invalid type name given: {search}
+
+    Caches:
+        cache.db-api_cache: one month
+
+    Note:
+        Using SDE needs more memory (15MB) but less time than ESI endpoint.
+        Considering most modern systems have adequate RAM, time is more sensitive.
+
+    Example:
+        >>> from eve_tools import search_type_id
+        >>> print(search_station_by_name(system_id=30000142, search="Caldari Navy"))
+        [('60003757', ' IV - Moon 5 - Caldari Navy Assembly Plant'), ('60003760', ' IV - Moon 4 - Caldari Navy Assembly Plant')]
+    """
+    
+    response = requests.get(f"https://esi.evetech.net/latest/universe/systems/{system_id}/?datasource=tranquility&language=en")
+   
+    if response.status_code == 200:
+
+        resp = ESIClient.get(
+            "/universe/systems/{system_id}/", system_id=system_id,
+        ).data
+
+        station_list_matching = []
+        station_description_list = []
+        station_information = []
+        for item in resp['stations']:
+            station_descriptions = str(search_station(item))
+            match = re.findall(search, station_descriptions)
+
+            if match:
+                station_descr = re.search(r"name=\'([A-ZA-z]+)(.+)'", station_descriptions)
+                station_list_matching.append(item)
+                station_description_list.append(station_descr.group(2))
+
+        for idx in range(len(station_list_matching)):
+            station_and_descr_grouped = (str(station_list_matching[idx]), station_description_list[idx])
+            station_information.append(station_and_descr_grouped)
+
+        return station_information
+    
+    else:
+        print(f"Invalid Entry, Status Code: {response.status_code}, Reason: {response.reason}")
+        
+
+@cache(expires=24 * 3600 * 30)       
+def search_station_by_system_name(system_name: str, station_description: str):
+    """Easily lookup all stations in a system by system name. Use description for a more specific search. """ 
+    """
+
+    Args:
+        system_name: str, station_description: str
+            Search for stations in a system using system name with a station description.
+            
+    
+    Returns:
+        A list of tupes in the format, [(system id, description),]
+
+    Raises:
+        
+
+    Caches:
+        cache.db-api_cache: one month
+
+    Note:
+        Using SDE needs more memory (15MB) but less time than ESI endpoint.
+        Considering most modern systems have adequate RAM, time is more sensitive.
+
+    Example:
+        >>> from eve_tools import search_type_id
+        >>> print(search_station_by_system_name("Jita", "Caldari Navy"))
+        [('60003757', ' IV - Moon 5 - Caldari Navy Assembly Plant'), ('60003760', ' IV - Moon 4 - Caldari Navy Assembly Plant')]
+    """
+    
+    system_id = search_id(search=system_name, category="system")
+    all_stations_in_system = search_station_by_name(system_id, station_description)
+    
+    return all_stations_in_system
+    
