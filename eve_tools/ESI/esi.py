@@ -584,7 +584,11 @@ class ESI(object):
                 default = api_param_.default
                 key = api_param_.name
                 value = self.__parse_request_keywords_in_query(
-                    keywords, key, api_param_.required, api_param_.default, api_param_.dtype
+                    keywords,
+                    key,
+                    api_param_.required,
+                    api_param_.default,
+                    api_param_.dtype,
                 )
                 if value is not None:
                     query_params.update({key: value})  # update if value is given
@@ -696,16 +700,24 @@ class _RequestChecker:
 
         Raises:
             InvalidRequestError: raised when blocked request is singular AND raises != False
-        
+
         Note:
             This method is not cached, but individual checks are cached for one month.
         """
         valid = True
         error = None
-        # Check type_id if exists
-        if valid and "type_id" in api_request.params:
-            type_id = api_request.params.get("type_id")
-            valid = await self._check_request_type_id(type_id)
+        # Check type_id in query
+        if valid and "type_id" in api_request.kwd:
+            type_id = api_request.kwd.get("type_id")
+            type_id_param = api_request.parameters["type_id"]
+
+            # Decide check or not
+            if type_id_param:  # if "type_id" not in parameters -> should be ignored
+                if type_id is None and not api_request.parameters["type_id"].required:
+                    # sometimes type_id = None is valid, so no check
+                    valid = True
+                else:  # check
+                    valid = await self._check_request_type_id(type_id)
             if not valid:
                 error = InvalidRequestError("type_id", type_id)
 

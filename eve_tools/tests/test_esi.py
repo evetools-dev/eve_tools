@@ -262,7 +262,7 @@ class TestRequestChecker(unittest.TestCase):
             )
 
         self.assertIsNone(
-            ESIClient.get(
+            ESIClient.head(
                 "/markets/{region_id}/orders/",
                 region_id=10000002,
                 type_id=type_id,
@@ -270,6 +270,29 @@ class TestRequestChecker(unittest.TestCase):
                 raises=False,
             )
         )
+
+        # Test: type_id on path
+        type_id = 12007
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.get("/universe/types/{type_id}/", type_id=type_id)
+
+        resp = ESIClient.head("/universe/types/{type_id}/", type_id=12005)
+        self.assertIsNotNone(resp)
+
+        # Test: type_id = None but is ok
+        type_id = None
+        resp = ESIClient.head(
+            "/markets/{region_id}/orders/",
+            region_id=10000002,
+            type_id=type_id,
+            raises=False,
+        )
+        self.assertIsNotNone(resp)
+
+        # Test: type_id not in ESIParams -> should be ignored
+        type_id = 1234567890
+        resp = ESIClient.head("/universe/categories/", type_id=type_id, raises=False)
+        self.assertIsNotNone(resp)
 
 
 class TestSSO(unittest.TestCase):
