@@ -1,19 +1,24 @@
 What's new in 0.1.3 (? ?, 2022)
 ==================================
 
+This release ...
+
 
 New features
 ------------
-*
-
+* Add test configuration functionality
+* ``tests`` module now skips tests that are incorrectly configured and when without an internet connection
+* Add custom logger with RotatingFileHandler (or ConcurrentRotatingFileHandler under win32)
+* Record database performance on different keywords
 
 Performance improvements
 ------------------------
-*
+* Reduce DELETE database call complexity
+* Handle TimeoutError and ServerDisconnectedError while issuing ESI request
 
 
 Contributors
 ------------
-A total of 0 people contributed patches to this release.
+A total of 1 people contributed patches to this release.
 
-*
+* Hanbo Guo

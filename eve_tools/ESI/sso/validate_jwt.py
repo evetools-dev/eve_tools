@@ -2,14 +2,14 @@
 
 Source: https://github.com/esi/esi-docs/blob/master/examples/python/sso/validate_jwt.py
 """
-import logging
-import sys
-
 import requests
+import sys
 from jose import jwt
 from jose.exceptions import ExpiredSignatureError, JWTError
 
-logger = logging.getLogger(__name__)
+from eve_tools.log import getLogger
+
+logger = getLogger(__name__)
 
 
 def validate_eve_jwt(jwt_token) -> dict:
@@ -32,7 +32,7 @@ def validate_eve_jwt(jwt_token) -> dict:
     try:
         jwk_sets = data["keys"]
     except KeyError as e:
-        logger.warning(
+        logger.error(
             "The returned JTW payload did not have the expected key {}. "
             "Payload returned from the SSO looks like: {}".format(e, data)
         )
@@ -49,8 +49,8 @@ def validate_eve_jwt(jwt_token) -> dict:
             audience="EVE Online",  # newly added required field
         )
     except ExpiredSignatureError:
-        logger.warning("The JWT token has expired")
+        logger.error("The JWT token has expired")
         sys.exit(1)
     except JWTError as e:
-        logger.warning(f"The JWT signature was invalid: {e}")
+        logger.error(f"The JWT signature was invalid: {e}")
         sys.exit(1)

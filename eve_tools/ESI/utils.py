@@ -1,7 +1,8 @@
 import copy
-import logging
 import time
 from aiohttp import ClientResponseError
+from aiohttp.client_exceptions import ServerDisconnectedError
+from asyncio.exceptions import TimeoutError
 from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate
@@ -9,9 +10,10 @@ from functools import wraps
 from inspect import iscoroutinefunction
 from typing import Callable, Coroutine, List, Optional, Union
 
-from eve_tools.data import make_cache_key, CacheDB
-from eve_tools.data.cache import SqliteCache
+from eve_tools.data import make_cache_key, CacheDB, SqliteCache
+from eve_tools.log import getLogger
 
+logger = getLogger(__name__)
 
 BAD_REQUEST = 400
 NOT_FOUND = 404
@@ -70,21 +72,29 @@ class ESIRequestError:
                     resp_code = exc.status
                     if resp_code in self.status_raise:
                         attempts = 0
-                    logging.warning("%s | attempts left: %s", exc, attempts)
 
                     self._global_error_remain[0] -= 1
 
-                    # Raises if needed
-                    if self.raises is True and attempts == 0:
+                    self.__log(exc, attempts)
+                except TimeoutError as exc:  # asyncio.exceptions.TimeoutError has empty exc
+                    attempts = 0
+                    logger.error("FAILED: asyncio.exceptions.TimeoutError")
+                except ServerDisconnectedError as exc:
+                    attempts -= 1
+                    self.__log(exc, attempts)
+
+                 # raise or return None
+                if attempts == 0:
+                    if self.raises is True:
                         raise
-                    if self.raises is False and attempts == 0:
+                    if self.raises is False:
                         return None
-                    if self.raises is None and attempts == 0:
+                    if self.raises is None:
                         # Why 5?
                         # If set to 0, ESI will always give 420 error, not being informative.
                         if self._global_error_remain[0] <= 5:
                             raise
-                        if self._global_error_remain[0] > 5:
+                        else:
                             return None
             return ret
 
@@ -93,6 +103,13 @@ class ESIRequestError:
     def __call__(self, func):
 
         return self.wrapper_retry(func)
+
+    @staticmethod
+    def __log(exc, attempts: int):
+        if attempts == 0:
+            logger.error("FAILED: %s | attempts left: %s", exc, attempts)
+        else:
+            logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
 
 
 @dataclass

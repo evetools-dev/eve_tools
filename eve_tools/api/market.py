@@ -386,7 +386,7 @@ async def _get_type_history_async(
     )
     # db is used to reduce ESI requests, but indexing a table with nearly one million rows is slow.
     if not update_flag:  # using db
-        rows = ESIDB.cursor.execute(
+        rows = ESIDB.execute(
             f"SELECT * FROM market_history WHERE region_id={rid} AND type_id={type_id}"
         )
         df = pd.DataFrame(rows, columns=ESIDB.columns["market_history"])
@@ -588,7 +588,7 @@ def get_region_types(region_name_or_id: Union[str, int], src: str = "esi") -> Li
         for respp in resp:
             ret.extend(respp.data)
     elif src == "db":
-        resp = ESIDB.cursor.execute(
+        resp = ESIDB.execute(
             f"SELECT DISTINCT type_id FROM orders WHERE region_id={rid}"
         )
         ret = list(map(lambda x: x[0], resp.fetchall()))
@@ -630,12 +630,12 @@ def get_structure_types(
     if not sid:
         sid = search_structure_id(structure_name_or_id, cname=cname)
 
-    resp = ESIDB.cursor.execute(
+    resp = ESIDB.execute(
         f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}"
     ).fetchall()
     if not resp:  # esi.db does not have records of structure market orders
         get_structure_market(sid, cname)
-        resp = ESIDB.cursor.execute(
+        resp = ESIDB.execute(
             f"SELECT DISTINCT type_id FROM orders WHERE location_id={sid}"
         ).fetchall()
     ret = list(map(lambda x: x[0], resp))
