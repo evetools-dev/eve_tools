@@ -27,7 +27,7 @@ BACKUPCOUNT = 10
 
 def get_stream_handler():
     handler = logging.StreamHandler()  # stderr
-    handler.setLevel(logging.ERROR)
+    handler.setLevel(logging.CRITICAL)
     handler.setFormatter(FORMATTER)
     return handler
 
