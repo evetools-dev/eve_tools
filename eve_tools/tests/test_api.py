@@ -193,8 +193,12 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertIn(12005, resp["type_id"].values)
 
         # Test: buy/sell flag correct
-        resp_sell: pd.DataFrame = get_station_market(station_name, order_type="sell")
-        resp_buy: pd.DataFrame = get_station_market(station_name, order_type="buy")
+        resp_sell: pd.DataFrame = request_from_ESI(
+            get_station_market, station_name, order_type="sell"
+        )
+        resp_buy: pd.DataFrame = request_from_ESI(
+            get_station_market, station_name, order_type="buy"
+        )
         self.assertEqual(len(resp), len(resp_sell) + len(resp_buy))
         self.assertTrue((resp_sell["is_buy_order"] == 0).all())
         self.assertTrue((resp_buy["is_buy_order"] == 1).all())

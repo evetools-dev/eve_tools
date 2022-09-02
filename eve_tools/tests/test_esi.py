@@ -1,12 +1,11 @@
 import unittest
-from aiohttp import ClientResponseError
 from datetime import datetime
 
 from eve_tools.ESI import ESIClient
-from eve_tools.ESI.metadata import ESIMetadata, ESIRequest
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
-from eve_tools.ESI.esi import _RequestChecker
+from eve_tools.ESI.esi import _RequestChecker, ESIResponse
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
+from eve_tools.exceptions import InvalidRequestError, ESIResponseError
 from eve_tools.data import CacheDB, SqliteCache
 from eve_tools.tests.utils import request_from_ESI
 from eve_tools.log import getLogger
@@ -109,143 +108,150 @@ class TestESI(unittest.TestCase):
         self.assertEqual(ESIClient._record.requests_failed, 0)
         self.assertEqual(ESIClient._record.requests_succeed, 2)
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
     def test_request_raises(self):
-        """Test ESI.request(..., raises=True/False/None).
-
-        Currently not available because _RequestChecker could 100% block requests with invalid type_id."""
+        """Test ESI.request(..., raises=True/False/None)."""
         # Make a correct request first
-        # resp = ESIClient.get(
-        #     "/markets/{region_id}/history/", region_id=10000002, type_id=12005
-        # )
-        # self.assertEqual(resp.error_remain, ESIRequestError._global_error_remain[0])
+        resp = ESIClient.get("/markets/{region_id}/history/", region_id=10000002, type_id=12005)
+        self.assertIsInstance(resp, ESIResponse)
+        self.assertEqual(resp.status, 200)
 
-        # # Test: raises = True
-        # error_remain_before = ESIRequestError._global_error_remain[0]
-        # with self.assertRaises(ClientResponseError):  # 404
-        #     ESIClient.get(
-        #         "/markets/{region_id}/history/",
-        #         region_id=10000002,
-        #         type_id=60078,
-        #         raises=True,
-        #     )
-        # error_remain_after = ESIRequestError._global_error_remain[0]
-        # self.assertEqual(error_remain_before - error_remain_after, 1)
+        resp = ESIClient.head("/markets/{region_id}/history/", region_id=10000002, type_id=12005)
+        self.assertIsInstance(resp, ESIResponse)
 
-        # with self.assertRaises(ClientResponseError):  # 404
-        #     ESIClient.get(  # with async_loop
-        #         "/markets/{region_id}/history/",
-        #         async_loop=["type_id"],
-        #         region_id=10000002,
-        #         type_id=[60078],
-        #         raises=True,
-        #     )
+        # Test: raises = True
+        with self.assertRaises(ESIResponseError):
+            ESIClient.get("/markets/{region_id}/orders/", region_id=1, raises=True)
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.get("/universe/types/{type_id}/", type_id=12007, raises=True)  # blocked
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.get(
+                "/universe/types/{type_id}/", async_loop=["type_id"], type_id=[12005, 12007], raises=True
+            )  # blocked
 
-        # # Test: raises = False
-        # resp = ESIClient.get(
-        #     "/markets/{region_id}/history/",
-        #     region_id=10000002,
-        #     type_id=60078,
-        #     raises=False,
-        # )
-        # self.assertIsNone(resp)
+        with self.assertRaises(ESIResponseError):
+            ESIClient.head("/markets/{region_id}/orders/", region_id=1, raises=True)
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.head("/universe/types/{type_id}/", type_id=12007, raises=True)  # blocked
 
-        # resp = ESIClient.get(
-        #     "/markets/{region_id}/history/",
-        #     async_loop=["type_id"],
-        #     region_id=10000002,
-        #     type_id=[60078, 12005],
-        #     raises=False,
-        # )
-        # self.assertEqual(len(resp), 1)
+        # Test: raises = False
+        resp = ESIClient.get("/markets/{region_id}/orders/", region_id=1, raises=False)
+        self.assertIsNone(resp)
+        resp = ESIClient.get("/universe/types/{type_id}/", type_id=12007, raises=False)  # blocked
+        self.assertIsNone(resp)
+        resp = ESIClient.get(
+            "/universe/types/{type_id}/", async_loop=["type_id"], type_id=[12005, 12007], raises=False
+        )
+        self.assertEqual(len(resp), 1)
 
-        # resp = ESIClient.head(
-        #     "/markets/{region_id}/history/",
-        #     region_id=10000002,
-        #     type_id=60078,
-        #     raises=False,
-        # )
-        # self.assertIsNone(resp)
+        resp = ESIClient.head("/markets/{region_id}/orders/", region_id=1, raises=False)
+        self.assertIsNone(resp)
+        resp = ESIClient.head("/universe/types/{type_id}/", type_id=12007, raises=False)  # blocked
+        self.assertIsNone(resp)
 
-        # # Test: raises = None
-        # ESIRequestError._global_error_remain[0] = 7
-        # resp = ESIClient.get(
-        #     "/markets/{region_id}/history/",
-        #     region_id=10000002,
-        #     type_id=60078,
-        #     raises=None,
-        # )
-        # self.assertIsNone(resp)
-        # self.assertEqual(ESIRequestError._global_error_remain[0], 6)
+        # Test: raises = None
+        resp = ESIClient.get("/markets/{region_id}/orders/", region_id=1, raises=None)
+        self.assertIsInstance(resp, ESIResponse)
 
-        # with self.assertRaises(ClientResponseError):  # 404
-        #     ESIClient.get(
-        #         "/markets/{region_id}/history/",
-        #         region_id=10000002,
-        #         type_id=60078,
-        #         raises=None,
-        #     )
-        # self.assertEqual(ESIRequestError._global_error_remain[0], 5)
+        resp: ESIResponse = ESIClient.get(
+            "/universe/types/{type_id}/", type_id=12007, raises=None
+        )  # blocked
+        self.assertIsInstance(resp, ESIResponse)
+        self.assertTrue(resp.request_info.blocked, True)
 
-        # # Test: default value
-        # ESIClient.get(
-        #     "/markets/{region_id}/history/", region_id=10000002, type_id=12005
-        # )  # correct request
+        resp = ESIClient.get(
+            "/universe/types/{type_id}/", async_loop=["type_id"], type_id=[12005, 12007], raises=None
+        )
+        self.assertEqual(len(resp), 2)
 
-        # if ESIRequestError._global_error_remain[0] > 7:
-        #     error_before = ESIRequestError._global_error_remain[0]
-        #     resp = ESIClient.get(
-        #         "/markets/{region_id}/history/",
-        #         async_loop=["type_id"],
-        #         region_id=10000002,
-        #         type_id=[60078, 12005, 63715],
-        #     )
-        #     error_after = ESIRequestError._global_error_remain[0]
-        #     self.assertEqual(len(resp), 1)
-        #     self.assertEqual(error_before - error_after, 2)
+        resp = ESIClient.head("/markets/{region_id}/orders/", region_id=1, raises=None)
+        self.assertIsInstance(resp, ESIResponse)
 
-        # ESIRequestError._global_error_remain[0] = 5
-        # with self.assertRaises(ClientResponseError):  # 404
-        #     ESIClient.get(
-        #         "/markets/{region_id}/history/",
-        #         async_loop=["type_id"],
-        #         region_id=10000002,
-        #         type_id=[63715, 1],
-        #     )
-        # self.assertEqual(ESIRequestError._global_error_remain[0], 4)
+        # raise when x_error_remain <= 5 can't be tested, as all requests regardless of success will update this value from ESI.
+        # but it should be correct.
+        self.assertTrue(True)
 
-        # with self.assertRaises(ClientResponseError):  # 404
-        #     ESIClient.head(
-        #         "/markets/{region_id}/history/",
-        #         region_id=10000002,
-        #         type_id=63715,
-        #     )
-        return
+        # Test: If async_loop not given, default True.
+        with self.assertRaises(ESIResponseError):
+            ESIClient.get("/markets/{region_id}/orders/", region_id=1)
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.get("/universe/types/{type_id}/", type_id=12007)  # blocked
+
+        with self.assertRaises(ESIResponseError):
+            ESIClient.head("/markets/{region_id}/orders/", region_id=1)
+
+        # Test: If given, default None.
+        resp = ESIClient.get(
+            "/universe/types/{type_id}/", async_loop=["type_id"], type_id=[12005, 12007, 1], raises=None
+        )
+        self.assertEqual(len(resp), 3)
 
 
 class TestRequestChecker(unittest.TestCase):
-    checker = _RequestChecker()
-    checker_cache = SqliteCache(CacheDB, "checker_cache")
+    def setUp(self) -> None:
+        self.checker = _RequestChecker()
+        self.checker_cache = SqliteCache(CacheDB, "checker_cache")
 
     @unittest.skipUnless(internet_on(), "no internet connection")
     def test_check_type_id(self):
         """Tests _RequestChecker._check_request_type_id()."""
         type_id = 12005
-        res = request_from_ESI(
-            self.checker._check_request_type_id, type_id, cache=self.checker_cache
-        )
+        res = request_from_ESI(self.checker._check_request_type_id, type_id, cache=self.checker_cache)
         self.assertTrue(res)
+        self.assertEqual(self.checker.requests, 1)
 
         type_id = 12007  # blocked: not a type_id
-        res = request_from_ESI(
-            self.checker._check_request_type_id, type_id, cache=self.checker_cache
-        )
+        res = request_from_ESI(self.checker._check_request_type_id, type_id, cache=self.checker_cache)
         self.assertFalse(res)
+        self.assertEqual(self.checker.requests, 1)
 
         type_id = 63715  # blocked: ESI endpoint
-        res = request_from_ESI(
-            self.checker._check_request_type_id, type_id, cache=self.checker_cache
-        )
+        res = request_from_ESI(self.checker._check_request_type_id, type_id, cache=self.checker_cache)
         self.assertFalse(res)
+        self.assertEqual(self.checker.requests, 2)  # request sent
+
+        # Test: default raise behavior
+        type_id = 12007
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.get(
+                "/markets/{region_id}/orders/",
+                region_id=10000002,
+                type_id=type_id,
+                order_type="all",
+            )
+
+        self.assertIsNone(
+            ESIClient.head(
+                "/markets/{region_id}/orders/",
+                region_id=10000002,
+                type_id=type_id,
+                order_type="all",
+                raises=False,
+            )
+        )
+
+        # Test: type_id on path
+        type_id = 12007
+        with self.assertRaises(InvalidRequestError):
+            ESIClient.get("/universe/types/{type_id}/", type_id=type_id)
+
+        resp = ESIClient.head("/universe/types/{type_id}/", type_id=12005)
+        self.assertIsNotNone(resp)
+
+        # Test: type_id = None but is ok
+        type_id = None
+        resp = ESIClient.head(
+            "/markets/{region_id}/orders/",
+            region_id=10000002,
+            type_id=type_id,
+            raises=False,
+        )
+        self.assertIsNotNone(resp)
+
+        # Test: type_id not in ESIParams -> should be ignored
+        type_id = 1234567890
+        resp = ESIClient.head("/universe/categories/", type_id=type_id, raises=False)
+        self.assertIsNotNone(resp)
 
 
 class TestSSO(unittest.TestCase):

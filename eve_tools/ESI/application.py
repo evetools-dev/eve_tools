@@ -109,7 +109,7 @@ class ESIApplications(object):
 
         logger.error("FAILED no application with %s", scope)
         raise ValueError(
-            f"No Application with {scope} found. Create one and save using Application class."
+            f"No Application with {scope} found. Create one using ESIClient.add_app_generate_token() method."
         )
 
     def append(self, app: Application) -> None:

@@ -1,6 +1,5 @@
 import copy
 import time
-from aiohttp import ClientResponseError
 from aiohttp.client_exceptions import ServerDisconnectedError
 from asyncio.exceptions import TimeoutError
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from inspect import iscoroutinefunction
 from typing import Callable, Coroutine, List, Optional, Union
 
 from eve_tools.data import make_cache_key, CacheDB, SqliteCache
+from eve_tools.exceptions import ESIResponseError
 from eve_tools.log import getLogger
 
 logger = getLogger(__name__)
@@ -18,22 +18,27 @@ logger = getLogger(__name__)
 BAD_REQUEST = 400
 NOT_FOUND = 404
 ERROR_LIMITED = 420
+STATUS_RAISE = (BAD_REQUEST, NOT_FOUND, ERROR_LIMITED, )
+
+ERROR_CATCHED = (
+    TimeoutError,
+    ServerDisconnectedError,
+)  # ESIResponseError not raise in _session_recorder
 
 
 class ESIRequestError:
     """A decorator that handles errors in ESI requests.
 
-    This decorator retries ESI request with error code 502 and 503.
-    Other codes, such as 400, 404, 420, etc., that are not ESI's error, are not repeated.
+    This decorator retries ESI requests conditionally on error.
+    Some response status codes, such as 400, 404, 420, etc., that are not ESI's error, are not repeated.
     ESI response headers has an x-error-limit field, which triggers an ERROR_LIMITED error when reaching 0.
 
     Attributes:
         attempts: Number of attempts, default 3.
-        raises: Raises ClientResponseError or not. Default True, raising errors when no attempts left.
-            If set to False, a None is returned.
+        raises: Raises errors or not. Default None, not raising errors when no attempts left.
+            If set to False, a None is returned. See ESI.get for more details.
     """
 
-    status_raise = [BAD_REQUEST, NOT_FOUND, ERROR_LIMITED]
     _global_error_remain = [100]
 
     def __init__(
@@ -61,32 +66,46 @@ class ESIRequestError:
 
             success = False
             ret = None
+            error = None
             while not success and attempts > 0:
                 try:
                     ret = await func(_esi_self, *_args, **_kwd)  # ESIResponse instance
-                    success = True
-                    if ret is not None:
+                    success = ret is not None and ret.status < 400
+                    if ret is None:
+                        attempts = 0  # ret = None when request is blocked
+                    else:
                         self._global_error_remain[0] = ret.error_remain
-                except ClientResponseError as exc:
+                        ret.raise_for_status()
+                except ESIResponseError as exc:
                     attempts -= 1
                     resp_code = exc.status
-                    if resp_code in self.status_raise:
+                    if resp_code in STATUS_RAISE:
                         attempts = 0
+                        self.__log_error(exc, attempts)
+                    else:
+                        self.__log_warning(exc, attempts)
 
                     self._global_error_remain[0] -= 1
-
-                    self.__log(exc, attempts)
+                    error = exc
                 except TimeoutError as exc:  # asyncio.exceptions.TimeoutError has empty exc
                     attempts = 0
                     logger.error("FAILED: asyncio.exceptions.TimeoutError")
+                    error = exc
+                    if self.raises is None:
+                        raise
                 except ServerDisconnectedError as exc:
                     attempts -= 1
-                    self.__log(exc, attempts)
+                    error = exc
+                    if attempts == 0 and self.raises is None:
+                        self.__log_error(exc, attempts)
+                        raise
+                    else:
+                        self.__log_warning(exc, attempts)
 
-                 # raise or return None
+                # raise or return None | ESIResponse
                 if attempts == 0:
                     if self.raises is True:
-                        raise
+                        raise error from None
                     if self.raises is False:
                         return None
                     if self.raises is None:
@@ -95,7 +114,7 @@ class ESIRequestError:
                         if self._global_error_remain[0] <= 5:
                             raise
                         else:
-                            return None
+                            return ret
             return ret
 
         return wrapped_retry
@@ -105,11 +124,12 @@ class ESIRequestError:
         return self.wrapper_retry(func)
 
     @staticmethod
-    def __log(exc, attempts: int):
-        if attempts == 0:
-            logger.error("FAILED: %s | attempts left: %s", exc, attempts)
-        else:
-            logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
+    def __log_warning(exc, attempts: int):
+        logger.warning("FAILED: %s | attempts left: %s", exc, attempts)
+
+    @staticmethod
+    def __log_error(exc, attempts: int):
+        logger.error("FAILED: %s | attempts left: %s", exc, attempts)
 
 
 @dataclass
@@ -188,7 +208,7 @@ def _session_recorder(
         # func is ESI.async_request or ESI.get/head
         @wraps(func)
         async def _session_recorder_wrapped_async(_self, *args, **kwd):
-            """Used when a coroutine function is decorated."""
+            # Used when a coroutine function is decorated.
             if not _self._record_session:
                 return await func(_self, *args, **kwd)
 
@@ -196,19 +216,28 @@ def _session_recorder(
             time_start = time.monotonic_ns()
             try:
                 resp = await func(_self, *args, **kwd)  # _self: ESI
-            except ClientResponseError:
+                # Currently this async version is only used by ESI.async_request,
+                # which returns an ESIResponse if request sent,
+                # or returns a None if request blocked.
+                if resp is not None:
+                    resp.raise_for_status()
+            except ERROR_CATCHED:
                 time_finish = time.monotonic_ns()
                 _session_record_fill(_self, resp, time_start, time_finish, failed=True)
                 raise  # ESIRequestError catches this
+            except ESIResponseError:
+                time_finish = time.monotonic_ns()
+                _session_record_fill(_self, resp, time_start, time_finish, failed=True)
             else:
                 time_finish = time.monotonic_ns()
-                _session_record_fill(_self, resp, time_start, time_finish, failed=False)
+                blocked = resp is None or resp.request_info.blocked
+                _session_record_fill(_self, resp, time_start, time_finish, failed=False, blocked=blocked)
 
             return resp
 
         @wraps(func)
         def _session_recorder_wrapped_normal(_self, *args, **kwd):
-            """Used when a normal callable function is decorated."""
+            # Used when a normal callable function is decorated.
             if not _self._record_session:
                 return func(_self, *args, **kwd)
 
@@ -216,7 +245,7 @@ def _session_recorder(
             time_start = time.monotonic_ns()
             try:
                 resp = func(_self, *args, **kwd)  # _self: ESI
-            except ClientResponseError:
+            except ERROR_CATCHED:
                 time_finish = time.monotonic_ns()
                 _session_record_fill(_self, resp, time_start, time_finish, failed=True)
                 raise  # ESIRequestError catches this
@@ -226,7 +255,7 @@ def _session_recorder(
 
             return resp
 
-        def _session_record_fill(_self, resp, t_s, t_f, failed: bool):
+        def _session_record_fill(_self, resp, t_s, t_f, failed: bool, blocked: bool = False):
             """Fills out useful info of from the response.
             Defines rules to fill out a _SessionRecord instance."""
             nonlocal fields, exclude
@@ -237,20 +266,16 @@ def _session_recorder(
             if fields is not None and exclude is not None:
                 for field in fields:
                     if field in exclude:
-                        raise ValueError(
-                            f"{field} should not exist in both fields and exclude."
-                        )
+                        raise ValueError(f"{field} should not exist in both fields and exclude.")
 
             record: _SessionRecord = _self._record
 
             # Update requests
-            if (fields is None or "requests" in fields) and (
-                exclude is None or "requests" not in exclude
-            ):
+            if (fields is None or "requests" in fields) and (exclude is None or "requests" not in exclude):
                 record.requests += 1
 
                 # Update requests_blocked
-                if resp is None and not failed:
+                if resp is None and not failed or blocked:
                     record.requests_blocked += 1
 
                 # Update requests_failed
@@ -258,19 +283,15 @@ def _session_recorder(
                     record.requests_failed += 1
 
                 # Update requests_succeed
-                if resp is not None and not failed:
+                if resp is not None and not failed and not blocked:
                     record.requests_succeed += 1
 
             # Update timer
-            if (fields is None or "timer" in fields) and (
-                exclude is None or "timer" not in exclude
-            ):
+            if (fields is None or "timer" in fields) and (exclude is None or "timer" not in exclude):
                 record.timer = round(record.timer + (t_f - t_s) / 1e9, 3)
 
             # Update expires: keep the earliest expire
-            if (fields is None or "expires" in fields) and (
-                exclude is None or "expires" not in exclude
-            ):
+            if (fields is None or "expires" in fields) and (exclude is None or "expires" not in exclude):
                 if resp is not None and resp.expires:
                     if record.expires is None:
                         record.expires = resp.expires

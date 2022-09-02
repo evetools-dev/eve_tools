@@ -5,7 +5,7 @@ import os
 import pandas as pd
 from dataclasses import dataclass
 from tqdm.asyncio import tqdm_asyncio
-from typing import Iterable, Optional, Union, List
+from typing import Iterable, Optional, Union, List, Tuple
 
 
 from .token import ESITokens, Token
@@ -19,6 +19,7 @@ from .utils import (
 )
 from eve_tools.config import SDE_DIR
 from eve_tools.log import getLogger
+from eve_tools.exceptions import InvalidRequestError, ESIResponseError
 
 
 logger = getLogger(__name__)
@@ -43,10 +44,15 @@ class ESIResponse:
             A json serialized response body, a dictionary or a list or an int.
         expires: str | None
             A RFC7231 formatted datetime string, if any.
+        reason: str | None
+            Reason-Phrase from aiohttp.ClientResponse.
         error_remain: int
             Errors the user can make in the time window.
         error_reset: int
             Time window left, in seconds. After this many seconds, error_remain will be refreshed to 100.
+
+    Note:
+        ESI class uses status=-1 to mark an error internally. (well this is abnormal but a useful shortcut...)
     """
 
     status: int
@@ -55,11 +61,18 @@ class ESIResponse:
     request_info: ESIRequest
     data: Optional[Union[dict, List, int]]
     expires: Optional[str] = None
+    reason: Optional[str] = None
     error_remain: Optional[int] = 100
     error_reset: Optional[int] = 60
 
     def __len__(self):
         return len(self.data)
+
+    def raise_for_status(self):
+        # Please note that this raise_for_status() is only intended for printing out useful exception message.
+        # This method does not recreate aiohttp.ClientResponse's raise_for_status().
+        if self.status >= 400:
+            raise ESIResponseError(self.status, self.request_info, self.reason)
 
 
 class ESI(object):
@@ -85,10 +98,11 @@ class ESI(object):
         # and ClientSession.__del__ logs some messages, causing things like "Module open not found".
         # If put within ESI, ESI.__del__ will be run first, which closes session connections,
         # avoiding errors from aiohttp.
-        self.__async_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
-        )  # default maximum 100 connections  # aiohttp advices not to create session per request
 
+        # default maximum 100 connections
+        # aiohttp advices not to create session per request
+        # even not setting raise_for_status=True, ESI class still raises conditionally.
+        self.__async_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
         self.__event_loop = asyncio.get_event_loop()
 
         ### Session record
@@ -97,6 +111,8 @@ class ESI(object):
 
         ### Request checker
         self.__request_checker = _RequestChecker()
+        self.__singular_req = False  # Single/multiple async request(s)
+        self.__raises = None  # user defined raise flag
 
         logger.info("ESI instance initiated")
 
@@ -128,31 +144,35 @@ class ESI(object):
         key: str,
         async_loop: Optional[List] = None,
         **kwd,
-    ) -> Union[dict, List[dict]]:
+    ) -> Union[dict, List[dict], None]:
         """Requests GET an ESI API.
 
         Simplifies coroutine execution and send asynchronous GET request to ESI server.
         The usage is similar to requests.get, with simplified async speed up.
-        When async_loop argument is empty, this method is sending one request and waiting its result.
+        When async_loop argument is empty, this method is sending one request through aiohttp and waiting its result.
         When async_loop is given, this method will loop through arguments in async_loop and run these tasks asynchronously,
         effectively executing multiple requests in parallel.
+
         Parameters are enforced similar to the "Try it out" function on the ESI website.
+        Some invalid parameters, such as region_id = 12345, are blocked locally and thus return None,
+        while some are not detected and thus might raise or return None depending on kwd ``raises``.
+        By default, raises for singular blocked request and not raise for blocked request within async loop.
         Some APIs require authorization. Use add_app_generate_token() method to ease through ESI oauth process.
 
         Args:
             key: str
-                A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
+                A string identifying the API endpoint, in the format ``/characters/{character_id}/industry/jobs/``.
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
             async_loop: List | None
                 A list of arguments that this method would loop through in order and execute asynchronously.
                 If async_loop is not given, this method would perform similar to a requests.get method.
                 If async_loop is given, this method requires corresponding kwd arguments exist and are iterable.
             kwd.raises: bool | None
-                Raises ClientResponseError or not. One of [None, True, False].
+                Raises errors or not on invalid/failed requests. One of [None, True, False].
                 If async_loop not given, default True. If given, default None.
-                None: raises when "x-esi-error-limit-remain" <= 5, return None when > 5.
-                True: always raises when no attempts left (1 attempt on code 400, 404, 420).
-                False: never raises, return None on error when no attempts left.
+                * True: always raises on errors (some errors allow multiple attempts).
+                * False: promise never raises, return None on error. Use with caution.
+                * None: same as True when response headers "x-esi-error-limit-remain" <= 5. Otherwise, not raise on status error (status > 400), raise on some other errors (TimeoutError, ServerDisconnectedError). Promise return an ESIResponse (or list of ESIResponse) when no error.
             kwd.params: dict
                 A dictionary containing parameters for the request.
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
@@ -166,16 +186,15 @@ class ESI(object):
                 A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
                 Default generating tokens.
             kwd.checks: bool
-                Whether to use _RequestChecker to incorrect requests.
-
+                Whether to use _RequestChecker to block incorrect requests, default True.
 
         Returns:
-            A dictionary or a list of dictionary, depends on async_loop argument.
+            An ESIResponse instance or a list of ESIResponse instances, depends on async_loop argument.
+            Or None, if ``async_loop = None`` and an error occurs and keyword ``raises = False``.
 
         Note:
-            If request needs character_id field and is an authenticated endpoint, character_id field is optional,
+            If request needs ``character_id`` field and is an authenticated endpoint, ``character_id`` field is optional,
             because authentication result contains the character_id of the authenticated character.
-
 
         Example:
         >>> from eve_tools import ESIClient   # ESIClient is an instance instantiated upon import
@@ -183,7 +202,7 @@ class ESI(object):
         >>> # Asynchronously request 100 pages (1000 orders per page) of buy orders of The Forge (region of Jita)
         >>> data = ESIClient.get("/markets/{region_id}/orders/", async_loop=["page"], region_id=1000002, page=range(1, 101), order_type="buy")
         """
-        if kwd.get("raises", "not given") == "not given":
+        if kwd.get("raises", ...) is Ellipsis:
             # uses default raises
             if async_loop:
                 raises = None
@@ -194,9 +213,10 @@ class ESI(object):
 
         if not async_loop:
             logger.info("REQUEST GET - %s w/k %s", key, str(kwd))
-            return self.__event_loop.run_until_complete(
-                self.request("get", key, raises=raises, **kwd)
-            )
+            self.__singular_req = True
+            ret = self.__event_loop.run_until_complete(self.request("get", key, raises=raises, **kwd))
+            self.__singular_req = False  # back to default
+            return ret
 
         if async_loop is not None and not isinstance(async_loop, Iterable):
             raise ValueError("async_loop should be iterable.")
@@ -221,19 +241,13 @@ class ESI(object):
             >>>             do something
             """
             if not async_loop:
-                tasks.append(
-                    asyncio.ensure_future(
-                        self.request("get", key, raises=raises, **kwd)
-                    )
-                )
+                tasks.append(asyncio.ensure_future(self.request("get", key, raises=raises, **kwd)))
                 return
             async_loop_cpy = async_loop[:]
             curr = async_loop_cpy.pop(0)
             kwd_cpy = kwd.copy()
             if curr not in kwd:
-                raise ValueError(
-                    f'Element "{curr}" in async_loop argument is not given as **kwd argument.'
-                )
+                raise ValueError(f'Element "{curr}" in async_loop argument is not given as **kwd argument.')
             if not isinstance(kwd[curr], Iterable):
                 raise ValueError(f"Keyword argument {curr} should be iterable.")
             for value in kwd[curr]:
@@ -275,10 +289,10 @@ class ESI(object):
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
             kwd.raises: bool | None
-                Raises ClientResponseError or not. One of [None, True, False]. Default True.
-                None: raises when "x-esi-error-limit-remain" <= 5, return None when > 5.
-                True: always raises when no attempts left (1 attempt on code 400, 404, 420).
-                False: never raises, return None on error when no attempts left.
+                Raises errors or not on invalid/failed requests. One of [None, True, False]. Default True.
+                * True: always raises on errors (some errors allow multiple attempts).
+                * False: promise never raises, return None on error. Use with caution.
+                * None: same as True when response headers "x-esi-error-limit-remain" <= 5. Otherwise, not raise on status error (status > 400), raise on some other errors (TimeoutError, ServerDisconnectedError). Promise return an ESIResponse when no error.
             kwd.params: dict
                 A dictionary containing parameters for the request.
                 Required params indicated by ESI are enforced. Optional params are filled in with default values.
@@ -292,11 +306,11 @@ class ESI(object):
                 A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
                 Default generating tokens
             kwd.checks: bool
-                Whether to use _RequestChecker to incorrect requests.
+                Whether to use _RequestChecker to block incorrect requests, default True.
 
         Returns:
             A dictionary containing headers from ESI request.
-            None, if request is blocked or has error.
+            Or None, if an error occurs and keyword ``raises = False``.
 
         Example:
         >>> from eve_tools import ESIClient       # ESIClient is an instance instantiated upon import
@@ -304,10 +318,11 @@ class ESI(object):
         >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
         """
         raises = kwd.pop("raises", True)
+        self.__singular_req = True
         logger.info("REQUEST HEAD - %s w/k %s", key, str(kwd))
-        return self.__event_loop.run_until_complete(
-            self.request("head", key, raises=raises, **kwd)
-        )
+        ret = self.__event_loop.run_until_complete(self.request("head", key, raises=raises, **kwd))
+        self.__singular_req = False
+        return ret
 
     async def request(self, method: str, key: str, **kwd) -> Union[dict, None]:
         """Sends one request to an ESI API.
@@ -325,17 +340,17 @@ class ESI(object):
                 A string identifying the API endpoint, in the format "/characters/{character_id}/industry/jobs/".
                 Keys should be copy-pasted from ESI website. Invalid keys are rejected.
             kwd.raises: bool | None
-                Raises ClientResponseError or not. One of [None, True, False].
-                None: raises when "x-esi-error-limit-remain" <= 5, return None when > 5.
-                True: always raises when no attempts left (1 attempt on code 400, 404, 420).
-                False: never raises, return None on error when no attempts left.
+                Raises errors or not on invalid/failed requests. One of [None, True, False]. Default None.
+                * True: always raises on errors (some errors allow multiple attempts).
+                * False: promise never raises, return None on error. Use with caution.
+                * None: same as True when response headers "x-esi-error-limit-remain" <= 5. Otherwise, not raise on status error (status > 400), raise on some other errors (TimeoutError, ServerDisconnectedError). Promise return an ESIResponse (or list of ESIResponse) when no error.
             kwd.checks: bool
-                Whether to use _RequestChecker to incorrect requests.
+                Whether to use _RequestChecker to block incorrect requests, default True.
             kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
 
         Returns:
             An instance of ESIResponse containing response of the request.
-            None, if request is blocked, or an error occurs and kwd.raises set to False or None.
+            Or None, if an error occurs and keyword ``raises`` set to False.
 
         Raises:
             NotImplementedError: Request type POST/DELETE/PUT is not supported.
@@ -347,9 +362,7 @@ class ESI(object):
 
         api_request = self._metadata[key]
         if api_request.request_type not in ["get", "head"]:
-            raise NotImplementedError(
-                f"Request type {api_request.request_type} is not supported."
-            )
+            raise NotImplementedError(f"Request type {api_request.request_type} is not supported.")
 
         api_request.kwd = copy.deepcopy(kwd)
 
@@ -375,7 +388,7 @@ class ESI(object):
 
         api_request.headers.update(headers)
 
-        raises = kwd.pop("raises", None)
+        self.__raises = kwd.pop("raises", None)
         checks = kwd.pop("checks", True)
 
         self.__parse_request_keywords(api_request, kwd)
@@ -385,16 +398,17 @@ class ESI(object):
         # where I need to use epoll (or select) to interrupt the blocking accept and do something else (like servering a client).
         # Something cool and slightly difficult to understand: https://stackoverflow.com/questions/49005651/how-does-asyncio-actually-work
         # self.async_request = ESIRequestError(raises=raises)(self.async_request)
-        res = await ESIRequestError(raises=raises)(self.async_request)(
+        res = await ESIRequestError(raises=self.__raises)(self.async_request)(
             api_request, method, checks=checks
         )
 
+        self.__raises = None  # back to default
         return res
 
     @_session_recorder(exclude="timer")
     async def async_request(
         self, api_request: ESIRequest, method: str, checks: bool = True
-    ) -> Union[dict, None]:
+    ) -> Union[ESIResponse, None]:
         """Asynchronous requests to ESI API.
 
         Uses aiohttp to asynchronously request GET to ESI API.
@@ -411,18 +425,32 @@ class ESI(object):
 
         Returns:
             An instance of ESIResponse containing response of the request. Memory allocation assumed not to be a problem.
-            None, if request is blocked or a 400/404 error occurs.
+            Or None, if an error occurs and ESI.request family sets keyword ``raises = False``.
         """
         # Check (predict) if api_request sent will cause ESI error.
         # This reduces 400, 404, and 403 errors.
-        if checks and not await self.__request_checker(api_request):
-            return None
+        __raise_flag = self.__raises
+        blocked = checks and not await self.__request_checker(api_request, __raise_flag)
+        if blocked:
+            if self.__raises is False:
+                return None
+            if self.__raises is None:
+                # promised to return an ESIResponse
+                return ESIResponse(
+                    status=-1,
+                    method=method,
+                    headers={},
+                    request_info=api_request,
+                    data=None,
+                )
+            # if self.__raises is True, should have been raised in RequestChecker
 
         # no encoding: "4-HWF" stays what it is
         if method == "get":
             async with self.__async_session.get(
                 api_request.url, params=api_request.params, headers=api_request.headers
             ) as req:
+                api_request.url = str(req.url)  # URL class implements str
                 data = await req.json()
                 resp = ESIResponse(
                     status=req.status,
@@ -431,6 +459,7 @@ class ESI(object):
                     request_info=api_request,
                     data=data,
                     expires=req.headers.get("Expires"),
+                    reason=req.reason,
                     error_remain=int(req.headers.get("x-esi-error-limit-remain")),
                     error_reset=int(req.headers.get("x-esi-error-limit-reset")),
                 )
@@ -439,6 +468,7 @@ class ESI(object):
             async with self.__async_session.head(
                 api_request.url, params=api_request.params, headers=api_request.headers
             ) as req:
+                api_request.url = str(req.url)
                 resp = ESIResponse(
                     status=req.status,
                     method=req.method,
@@ -446,15 +476,14 @@ class ESI(object):
                     request_info=api_request,
                     data=None,
                     expires=req.headers.get("Expires"),
+                    reason=req.reason,
                     error_remain=int(req.headers.get("x-esi-error-limit-remain")),
                     error_reset=int(req.headers.get("x-esi-error-limit-reset")),
                 )
 
         return resp
 
-    def add_app_generate_token(
-        self, clientId: str, scope: str, callbackURL: Optional[str] = None
-    ) -> None:
+    def add_app_generate_token(self, clientId: str, scope: str, callbackURL: Optional[str] = None) -> None:
         """Adds a new Application to the client and generate a token for it.
 
         Creates a new Application with given parameters, which should be obtained from applications in:
@@ -517,9 +546,7 @@ class ESI(object):
             return
 
         logger.error("Invalid request method: %s", method)
-        raise ValueError(
-            f"Request method {method} is not supported by {api_request.request_key} request."
-        )
+        raise ValueError(f"Request method {method} is not supported by {api_request.request_key} request.")
 
     def __parse_request_keywords(self, api_request: ESIRequest, keywords: dict) -> None:
         """Parses and checks user provided parameters.
@@ -560,16 +587,18 @@ class ESI(object):
         for api_param_ in api_request.parameters:
             if api_param_._in == "path":
                 key = api_param_.name
-                value = self.__parse_request_keywords_in_path(
-                    keywords, key, api_param_.dtype, cid
-                )
+                value = self.__parse_request_keywords_in_path(keywords, key, api_param_.dtype, cid)
                 path_params.update({key: value})
                 # dict unpacking later
             elif api_param_._in == "query":
                 default = api_param_.default
                 key = api_param_.name
                 value = self.__parse_request_keywords_in_query(
-                    keywords, key, api_param_.required, api_param_.dtype
+                    keywords,
+                    key,
+                    api_param_.required,
+                    api_param_.default,
+                    api_param_.dtype,
                 )
                 if value is not None:
                     query_params.update({key: value})  # update if value is given
@@ -591,9 +620,7 @@ class ESI(object):
         api_request.url = self.metaurl + url  # urljoin is difficult to deal with...
 
     @staticmethod
-    def __parse_request_keywords_in_path(
-        where: dict, key: str, dtype: str, cid: int = 0
-    ) -> str:
+    def __parse_request_keywords_in_path(where: dict, key: str, dtype: str, cid: int = 0) -> str:
         # dtype is not checked yet. Checking it needs to parse "schema" field and integerate into "dtype",
         # and needs to find a way to fit user input to the dtype field.
         # No need to check Param.required because Param._in == "path" => Param.required == True
@@ -607,7 +634,7 @@ class ESI(object):
 
     @staticmethod
     def __parse_request_keywords_in_query(
-        where: dict, key: str, required: bool, dtype: str
+        where: dict, key: str, required: bool, default, dtype: str
     ) -> str:
         value = where.pop(key, None)
         params = where.get("params")
@@ -618,20 +645,18 @@ class ESI(object):
         if value and value2:
             raise KeyError(f'Duplicate key "{key}" in both keywords and params.')
 
-        if value is None and value2 is None and required:
+        if value is None and value2 is None and required and default is None:
             raise KeyError(f'Missing key "{key}" in keywords.')
 
+        if value is None and value2 is None:
+            return default
         if value is not None:
             return value
-        elif value2 is not None:
+        if value2 is not None:
             return value2
-        else:
-            return None
 
     @staticmethod
-    def __parse_request_keywords_in_header(
-        where: dict, key: str, required: bool, dtype: str
-    ) -> str:
+    def __parse_request_keywords_in_header(where: dict, key: str, required: bool, dtype: str) -> str:
         value = where.pop(key, None)
         if not required:
             return value
@@ -664,31 +689,50 @@ class _RequestChecker:
     # Reading a .csv.bz2 is costly. Takes 15MB memory and a long time (~0.x second)
     invTypes = pd.read_csv(os.path.join(SDE_DIR, "invTypes.csv.bz2"))
 
-    requests = 0  # just for fun
+    def __init__(self) -> None:
+        self.raise_flag = False
+        self.requests = 0  # just for fun
 
-    async def __call__(self, api_request: ESIRequest) -> bool:
+    async def __call__(self, api_request: ESIRequest, raise_flag: bool = False) -> bool:
+        self.raise_flag = raise_flag
         return await self._check_request(api_request)
 
-    @cache_check_request
     async def _check_request(self, api_request: ESIRequest) -> bool:
         """Checks if an ESIRequest is valid.
 
         Checks parameters of an ESIRequest, and predicts if the request is valid.
         Currently, the ESI._check_* family only checks parameters following some rules.
         This means there is no feedback loop from responses.
+
+        Raises:
+            InvalidRequestError: raised when request is blocked and ESI.request family sets keyword ``raises = True``.
+
+        Note:
+            This method is not cached, but individual checks are cached for one month.
         """
         valid = True
-        # Check type_id if exists
-        if "type_id" in api_request.params:
-            type_id = api_request.params.get("type_id")
-            valid = await self._check_request_type_id(type_id)
+        error = None
+        # Check type_id in query
+        if valid and "type_id" in api_request.kwd:
+            type_id = api_request.kwd.get("type_id")
+            type_id_param = api_request.parameters["type_id"]
 
+            # Decide check or not
+            if type_id_param:  # if "type_id" not in parameters -> should be ignored
+                if type_id is None and not api_request.parameters["type_id"].required:
+                    # sometimes type_id = None is valid, so no check
+                    valid = True
+                else:  # check
+                    valid = await self._check_request_type_id(type_id)
+            if not valid:
+                error = InvalidRequestError("type_id", type_id)
+
+        # other tests: if valid and "xxx" in api_request.params:
         if not valid:
-            logger.debug(
-                'BLOCKED - endpoint_"%s": %s',
-                api_request.request_key,
-                api_request.kwd,
-            )
+            self.__log(api_request)
+            api_request.blocked = True
+            if self.raise_flag is True and error is not None:
+                raise error from None
 
         return valid
 
@@ -699,25 +743,32 @@ class _RequestChecker:
         Uses type_id from api_requests.params["type_id"].
         First checks using SDE, then checks using ESI endpoint if SDE passed.
         This method is independent from api/check and api/search.
+
+        Note:
+            This method is cached for one month
         """
-        if type_id not in self.invTypes["typeID"].values:
-            return False
+        valid = type_id in self.invTypes["typeID"].values
 
-        invType = self.invTypes.loc[self.invTypes["typeID"] == type_id]
-        published = bool(int(invType["published"]))
-        if not published:
-            return False
+        if valid is True:
+            invType = self.invTypes.loc[self.invTypes["typeID"] == type_id]
+            valid = bool(int(invType["published"]))
 
-        async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
-        ) as session:
-            async with session.get(
-                f"https://esi.evetech.net/latest/universe/types/{type_id}/?datasource=tranquility&language=en",
-            ) as resp:
-                data: dict = await resp.json()
-                published = data.get("published")
-                self.requests += 1
-                if not published:
-                    return False
+        if valid is True:
+            async with aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
+            ) as session:
+                async with session.get(
+                    f"https://esi.evetech.net/latest/universe/types/{type_id}/?datasource=tranquility&language=en",
+                ) as resp:
+                    data: dict = await resp.json()
+                    self.requests += 1
+                    valid = data.get("published")
 
-        return True
+        return valid
+
+    def __log(self, api_request: ESIRequest):
+        logger.warning(
+            'BLOCKED - endpoint_"%s": %s',
+            api_request.request_key,
+            api_request.kwd,
+        )

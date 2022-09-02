@@ -1,7 +1,9 @@
 import os
 import logging
 import sys
-from concurrent_log_handler import ConcurrentRotatingFileHandler
+
+if sys.platform == "win32":
+    from concurrent_log_handler import ConcurrentRotatingFileHandler
 from logging import Logger
 from logging.handlers import RotatingFileHandler
 from typing import Optional
@@ -25,7 +27,7 @@ BACKUPCOUNT = 10
 
 def get_stream_handler():
     handler = logging.StreamHandler()  # stderr
-    handler.setLevel(logging.ERROR)
+    handler.setLevel(logging.CRITICAL)
     handler.setFormatter(FORMATTER)
     return handler
 

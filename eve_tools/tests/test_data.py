@@ -27,7 +27,8 @@ class TestCache(unittest.TestCase):
     def test_cache_record(self):
         """Test CacheStats and _CacheRecord"""
         cache = SqliteCache(self.TESTDB, table="api_cache")
-        self.assertEqual(id(cache), cache.record.id)
+        self.assertEqual(cache.record.db_name, "test")
+        self.assertEqual(cache.record.table, "api_cache")
 
         # Test: miss/hits setter & getter
         cache.hits += 1
@@ -53,15 +54,10 @@ class TestCache(unittest.TestCase):
         self.assertEqual(cache.miss, 1)
 
         # Test: CacheStats
-        self.assertGreaterEqual(len(CacheStats.record), 1)
-        self.assertEqual(len(CacheStats.record), len(CacheStats.instances))
-        instance = None
-        for _record in CacheStats.record:
-            if _record.id == id(cache):
-                instance = _record
-        self.assertIsNotNone(instance)
-        self.assertEqual(instance.hits, 1)
-        self.assertEqual(instance.miss, 1)
+        record = CacheStats.record
+        self.assertGreaterEqual(len(record), 1)
+        self.assertEqual(len(record), len(record))
+        self.assertIn(cache._record, record)
 
         # Clean up
         cache.evict(key)

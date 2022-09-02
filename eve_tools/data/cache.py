@@ -27,6 +27,7 @@ class _CacheRecordBaseClass:
 
     @property
     def record(self):
+        """Returns a list of record, one for each cache instance."""
         ret = [_cache.record for _cache in self.instances]
         return ret
 
@@ -38,8 +39,9 @@ CacheStats = _CacheRecordBaseClass()
 class _CacheRecord:
     """Records hits and misses of a cache instance."""
 
+    db_name: str
+    table: str
     caller: str = None
-    id: int = 0
     hits: int = 0
     miss: int = 0
 
@@ -53,14 +55,12 @@ class BaseCache(_CacheRecordBaseClass):
     User of BaseCache should call super().__init__() to register instance under cache stats.
     """
 
-    def __init__(self):
+    def __init__(self, esidb: ESIDBManager, table: str):
         self.__class__.instances.add(self)
-        self._record = _CacheRecord()
         module = inspect.getmodule(inspect.stack(0)[2][0])
         if module is not None:
             module = module.__name__
-        self._record.caller = module
-        self._record.id = id(self)
+        self._record = _CacheRecord(esidb.db_name, table, module)
 
     def set(self, key, value, expires):
         raise NotImplementedError
@@ -105,7 +105,7 @@ class SqliteCache(BaseCache):
         self.table = table
 
         self._last_used = None  # used for testing
-        super().__init__()
+        super().__init__(esidb, table)
         logger.info("SqliteCache initiated: %s-%s", esidb.db_name, table)
 
     def set(self, key, value, expires: Union[str, int] = None):
