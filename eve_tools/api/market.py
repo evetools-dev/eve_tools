@@ -227,8 +227,6 @@ def get_region_market(
     df["retrieve_time"] = int(time.time())  # save some digits
     df["region_id"] = rid
 
-    print(df.columns)
-
     df.sort_values(
         ["type_id", "is_buy_order", "price"],
         axis=0,

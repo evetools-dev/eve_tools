@@ -3,6 +3,7 @@ import requests
 import json
 from typing import Any, List, Optional
 from dataclasses import dataclass, field
+from yarl import URL
 
 from eve_tools.config import METADATA_PATH
 from eve_tools.log import getLogger
@@ -60,6 +61,14 @@ class ESIRequest:
     kwd: Optional[dict] = field(default_factory=dict)
 
     token: Optional[Token] = None
+    blocked: Optional[bool] = False
+
+    @property
+    def real_url(self) -> URL:
+        # This is very different from aiohttp's request_info.real_url, 
+        # which uses URL class in a more informative way.
+        # This method is only intended for printing exception message correctly.
+        return URL(self.url)
 
 
 class ESIMetadata(object):
