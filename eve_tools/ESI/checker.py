@@ -117,15 +117,21 @@ class ESIRequestChecker(metaclass=_NonOverridable):
             valid = bool(int(invType["published"]))
 
         if valid is True:
-            async with aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
-            ) as session:
-                async with session.get(
-                    f"https://esi.evetech.net/latest/universe/types/{type_id}/?datasource=tranquility&language=en",
-                ) as resp:
-                    data: dict = await resp.json()
-                    self.requests += 1
-                    valid = data.get("published")
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+                success = False
+                attempts = 3
+                while not success and attempts > 0:
+                    async with session.get(
+                        f"https://esi.evetech.net/latest/universe/types/{type_id}/?datasource=tranquility&language=en",
+                    ) as resp:
+                        if resp.status == 502:
+                            attempts -= 1
+                            continue
+                        if resp.status == 200:
+                            success = True
+                        data: dict = await resp.json()
+                        self.requests += 1
+                        valid = data.get("published")
 
         return valid
 
