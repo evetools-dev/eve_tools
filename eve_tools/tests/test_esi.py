@@ -293,10 +293,33 @@ class TestRequestChecker(unittest.TestCase, TestInit):
         self.assertEqual(miss + 1, self.checker_cache.miss)  # 1405 miss
         self.assertEqual(hits + 3, self.checker_cache.hits)  # 12005 & 12006 & 12007 hit
 
+        hits, miss = self.checker_cache.hits, self.checker_cache.miss
+        ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000003,  # new region
+            async_loop=["type_id"],
+            type_id=[1405, 12007, 12006, 12005],
+        )
+        self.assertEqual(hits + 4, self.checker_cache.hits)
+
+        # Test: change checker and still works
+        checker = ESIRequestChecker(self.checker_cache)
+        ESIClient.setChecker(checker)
+        hits, miss = self.checker_cache.hits, self.checker_cache.miss
+        ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000003,  # new region
+            async_loop=["type_id"],
+            type_id=[1405, 12007, 12006, 12005],
+        )
+        self.assertEqual(hits + 4, self.checker_cache.hits)
+        self.assertEqual(miss, self.checker_cache.miss)
+
         ESIClient.checker.cache = default_checker_cache
 
     def tearDown(self) -> None:
         self.TESTDB.clear_db()
+        self.checker_cache.buffer.clear()
 
 
 class TestSSO(unittest.TestCase):

@@ -1,49 +1,16 @@
-"""Implementation referenced from ESIPy under BSD-3-Clause License"""
-import hashlib
+"""Implementation ideas referenced from ESIPy under BSD-3-Clause License"""
+import atexit
 import inspect
 import pickle
 from email.utils import parsedate
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Coroutine, Union, Callable
+from typing import Union
 
+from .utils import _CacheRecordBaseClass, _CacheRecord, InsertBuffer, hash_key
 from eve_tools.data import ESIDBManager
 from eve_tools.log import getLogger
 
 logger = getLogger(__name__)
-
-
-def hash_key(key) -> str:
-    """Default hashing function for a key. Using sha256 as hash function."""
-    name = key[-1]
-    return f"esi_cache-{name}-" + hashlib.sha256(pickle.dumps(key)).hexdigest()
-
-
-class _CacheRecordBaseClass:
-    """Base class holding all cache instances.
-    Provides stats over all instances."""
-
-    instances = set()
-
-    @property
-    def record(self):
-        """Returns a list of record, one for each cache instance."""
-        ret = [_cache.record for _cache in self.instances]
-        return ret
-
-
-CacheStats = _CacheRecordBaseClass()
-
-
-@dataclass
-class _CacheRecord:
-    """Records hits and misses of a cache instance."""
-
-    db_name: str
-    table: str
-    caller: str = None
-    hits: int = 0
-    miss: int = 0
 
 
 class BaseCache(_CacheRecordBaseClass):
@@ -103,6 +70,8 @@ class SqliteCache(BaseCache):
     def __init__(self, esidb: ESIDBManager, table: str):
         self.c = esidb
         self.table = table
+        self.buffer = InsertBuffer(self.c, self.table)
+        atexit.register(self.buffer.flush)
 
         self._last_used = None  # used for testing
         super().__init__(esidb, table)
@@ -123,18 +92,13 @@ class SqliteCache(BaseCache):
         if not expires:
             expires = datetime.utcnow().replace(microsecond=0) + timedelta(seconds=1200)
         elif isinstance(expires, int):
-            expires = datetime.utcnow().replace(microsecond=0) + timedelta(
-                seconds=expires
-            )
+            expires = datetime.utcnow().replace(microsecond=0) + timedelta(seconds=expires)
         else:
             expires = datetime(*parsedate(expires)[:6])
 
         _h = hash_key(key)
-        self.c.execute(
-            f"INSERT OR REPLACE INTO {self.table} VALUES(?,?,?)",
-            (_h, pickle.dumps(value), expires),
-        )
-        self.c.commit()
+        entry = (_h, pickle.dumps(value), expires)
+        self.buffer.insert(entry)
         logger.debug("Cache entry set: %s", _h)
 
     def get(self, key, default=None):
@@ -148,15 +112,18 @@ class SqliteCache(BaseCache):
             default: If cache returns nothing, returns a default value. Default None.
         """
         _h = hash_key(key)
-        row = self.c.execute(
-            f"SELECT * FROM {self.table} WHERE key=?", (_h,)
-        ).fetchone()
+        row = self.c.execute(f"SELECT * FROM {self.table} WHERE key=?", (_h,)).fetchone()  # should use fetchall and check
+        if not row:
+            row = self.buffer.select(_h)
         if not row:
             logger.debug("Cache MISS: %s", _h)
             self.miss += 1
             return default
 
-        expires = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
+        expires = row[2]
+        if isinstance(expires, str):  # expires selected from DB is str, selected from buffer is datatime
+            expires = datetime.strptime(expires, "%Y-%m-%d %H:%M:%S")
+
         if datetime.utcnow() > expires:
             logger.debug("Cache EXPIRED: %s", _h)
             self.miss += 1
@@ -175,56 +142,3 @@ class SqliteCache(BaseCache):
         self.c.execute(f"DELETE FROM {self.table} WHERE key=?", (_h,))
         self.c.commit()
         logger.debug("Cache entry evicted: %s", _h)
-
-
-def make_cache_key(func: Union[Callable, Coroutine], *args, **kwd):
-    """Hashes a function and its arguments using sha256.
-
-    The function is hashed using function_hash() to a string.
-    The args and kwds are pickled to bytes.
-    If any of args or kwd is a function, this function encodes them by inspecting source code.
-    If the source code is changed, this function encodes a different value.
-
-    Args:
-        func: A function or a coroutine.
-        args: Argument passed to the api function in argument form.
-        kwd: Keyword arguments passed to the api function.
-
-    Returns:
-        A set containing (function_hash, str(args), str(kwd))
-
-    Examples:
-    >>> # Encode: get_market_history("The Forge", reduces=reduce_volume)
-    >>> key_before = make_cache_key(get_market_history, "The Forge", reduce_volume)
-    >>> # If reduce_volume is changed, even if a space or an extra line is added
-    >>> key_after = make_cache_key(get_market_history, "The Forge", reduce_volume)
-    >>> assert key_before != key_after
-    """
-    func_args = list(args)
-    func_kwd = kwd.copy()
-    for i in range(len(func_args)):
-        if isinstance(func_args[i], Callable):
-            func_args[i] = function_hash(func_args[i])
-        if isinstance(func_args[i], list):
-            func_args[i] = list(set(func_args[i]))
-    for k in func_kwd:
-        if isinstance(func_kwd[k], Callable):
-            func_kwd[k] = function_hash(func_kwd[k])
-        if isinstance(func_kwd[k], list):
-            func_kwd[k] = list(set(func_kwd[k]))
-    _h = function_hash(func)
-
-    ret = (_h, pickle.dumps(func_args), pickle.dumps(func_kwd), func.__qualname__)
-    return ret
-
-
-def function_hash(func: Union[Callable, Coroutine]):
-    """Hashes a function.
-
-    Hashes a function based on its source code. If the source code is modified in any way,
-    this function hashes to a different value.
-    """
-    return "esi_function-{}-{}".format(
-        func.__qualname__,
-        hashlib.sha256(inspect.getsource(func).encode("utf-8")).hexdigest(),
-    )

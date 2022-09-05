@@ -6,8 +6,7 @@ from inspect import iscoroutinefunction
 from typing import Callable, Coroutine, Union, Optional
 
 from eve_tools import api_cache
-from eve_tools.data import ESIDBManager
-from eve_tools.data.cache import make_cache_key
+from eve_tools.data import ESIDBManager, make_cache_key
 from eve_tools.log import getLogger
 
 logger = getLogger(__name__)
