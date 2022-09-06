@@ -4,7 +4,7 @@ import pickle
 import re
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Union, Callable, Coroutine, TYPE_CHECKING
+from typing import Dict, List, Tuple, Union, Callable, Coroutine, TYPE_CHECKING
 
 from eve_tools.log import getLogger
 
@@ -87,6 +87,21 @@ class InsertBuffer:
         return len(self.buffer)
 
 
+class srcodeBuffer:
+    """Buffers inspect.getsource, which takes ~10s out of ~100s in a market history request with 10k type_ids."""
+
+    payload: Dict = {}  # not a dataclass
+
+    @classmethod
+    def getsource(cls, func: Union[Callable, Coroutine]):
+        key = func.__qualname__
+        srcode = cls.payload.get(key)
+        if srcode is None:
+            srcode = inspect.getsource(func)
+            cls.payload[key] = srcode
+        return srcode
+
+
 # ---- Utility functions ---- #
 
 
@@ -137,7 +152,7 @@ def function_hash(func: Union[Callable, Coroutine]):
     Hashes a function based on its source code. If the source code is modified in any way,
     this function hashes to a different value. If docstring is changed, hash should remain intact.
     """
-    source_code = inspect.getsource(func)
+    source_code = srcodeBuffer.getsource(func)
     source_code = re.sub(r'"""[\w\W]+?"""\n', "", source_code)
     return "esi_function-{}-{}".format(
         func.__qualname__,
