@@ -6,7 +6,7 @@ from inspect import iscoroutinefunction
 from typing import Callable, Coroutine, Union, Optional
 
 from eve_tools import api_cache
-from eve_tools.data.cache import make_cache_key
+from eve_tools.data import ESIDBManager, make_cache_key
 from eve_tools.log import getLogger
 
 logger = getLogger(__name__)
@@ -131,6 +131,8 @@ class TestInit:
     TESTDIR = os.path.realpath(os.path.dirname(__file__))
 
     config = test_config
+
+    TESTDB = ESIDBManager("test", parent_dir=TESTDIR, schema_name="cache")
 
 
 def request_from_ESI(esi_func: Union[Callable, Coroutine], *args, **kwd):

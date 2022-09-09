@@ -8,13 +8,16 @@ New features
 ------------
 * Add test configuration functionality
 * ``tests`` module now skips tests that are incorrectly configured and when without an internet connection
-* Add custom logger with RotatingFileHandler (or ConcurrentRotatingFileHandler under win32)
-* Record database performance on different keywords
+* Change default logging handler to RotatingFileHandler (or ConcurrentRotatingFileHandler under win32)
+* Add database operation record to keep track of number of calls and time spent
+* Seperate ``RequestChecker`` from ``ESI`` class, making check methods customizable
 
 Performance improvements
 ------------------------
 * Reduce DELETE database call complexity
-* Handle TimeoutError and ServerDisconnectedError while issuing ESI request
+* Buffer INSERT database call to reduce number of transactions
+* Buffer inspect.getsource to reduce make_cache_key speed overhead
+* Tracks cache entry ``expires`` and DELETE when time has passed
 
 
 Contributors

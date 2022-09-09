@@ -7,11 +7,14 @@ from datetime import datetime
 from email.utils import parsedate
 from functools import wraps
 from inspect import iscoroutinefunction
-from typing import Callable, Coroutine, List, Optional, Union
+from typing import Callable, Coroutine, List, Optional, Union, TYPE_CHECKING
 
-from eve_tools.data import make_cache_key, CacheDB, SqliteCache
+from eve_tools.data import make_cache_key
 from eve_tools.exceptions import ESIResponseError
 from eve_tools.log import getLogger
+
+if TYPE_CHECKING:
+    from eve_tools.ESI import ESIRequestChecker
 
 logger = getLogger(__name__)
 
@@ -317,23 +320,20 @@ def _session_recorder(
     raise NotImplementedError
 
 
-checker_cache = SqliteCache(CacheDB, "checker_cache")
-
-
 def cache_check_request(func: Coroutine):
     # func has signature: async def _check_*(self, *) -> boolh
     @wraps(func)
-    async def cache_check_request_wrapped(_self, *args, **kwd):
+    async def cache_check_request_wrapped(_self: "ESIRequestChecker", *args, **kwd):
         # Caches _RequestChecker methods
         key = make_cache_key(func, *args, **kwd)
-        value = checker_cache.get(key)
+        value = _self.cache.get(key)
         if value is not None:  # cache hit
             return value
 
         ret = await func(_self, *args, **kwd)  # exec
 
         expires = 24 * 3600 * 30  # one month
-        checker_cache.set(key, ret, expires)
+        _self.cache.set(key, ret, expires)
         return ret
 
     return cache_check_request_wrapped
