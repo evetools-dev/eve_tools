@@ -1,11 +1,13 @@
+from ctypes.wintypes import HMODULE
 import inspect
 import unittest
+from datetime import datetime, timedelta
 from typing import Callable, List
 
 from .utils import TestInit
 from eve_tools.data import ESIDBManager, CacheDB, CacheStats, make_cache_key
 from eve_tools.data.cache import SqliteCache
-from eve_tools.data.utils import hash_key, function_hash, srcodeBuffer
+from eve_tools.data.utils import hash_key, function_hash, srcodeBuffer, _DeleteHandler
 from eve_tools.log import getLogger
 
 logger = getLogger("test_data")
@@ -22,6 +24,61 @@ def _plus_one(n: int):
 class TestCache(unittest.TestCase, TestInit):
     def setUp(self) -> None:
         logger.debug("TEST running: %s", self.id())
+
+    def test_delete_handler(self):
+        handler = _DeleteHandler(self.TESTDB, "checker_cache")
+        self.assertIsInstance(handler.schedule, list)
+
+        # Test: priority
+        if len(handler.schedule) > 1:
+            for i in range(len(handler.schedule) - 1):
+                self.assertLess(handler.schedule[i], handler.schedule[i + 1])
+                self.assertEqual(handler.schedule[i].minute % 5, 0)
+
+        handler.schedule = []  # remove all for testing
+
+        # Test: round up
+        t1 = datetime.utcnow()
+        handler.update(t1 + timedelta(minutes=20))
+        self.assertEqual(len(handler.schedule), 1)
+        self.assertIsInstance(handler.schedule[0], datetime)
+        self.assertEqual(handler.schedule[0].minute % 5, 0)
+        handler.schedule = []
+        t1 = t1.replace(minute=32)
+        handler.update(t1 + timedelta(hours=1))
+        self.assertEqual(handler.schedule[0].minute, 35)
+        self.assertIsNone(handler.last_delete)
+
+        if t1.minute < 59:
+            handler.schedule = []
+            t1 = t1.replace(minute=59)
+            handler.update(t1)  # should be fine
+            self.assertEqual(handler.schedule[0].minute, 0)
+            self.assertIsNone(handler.last_delete)
+
+        # Test: duplicate
+        handler.schedule = []
+        t1 = datetime.utcnow() + timedelta(minutes=10)
+        handler.update(t1)
+        self.assertEqual(len(handler.schedule), 1)
+        handler.update(t1)
+        handler.update(t1)
+        self.assertEqual(len(handler.schedule), 1)
+        self.assertIsNone(handler.last_delete)
+
+        # Test: priority
+        handler.schedule = []
+        t1 = datetime.utcnow() + timedelta(minutes=10)
+        t = [t1 + timedelta(minutes=i) for i in range(0, 50, 5)]
+        t.reverse()
+        for expire in t:
+            handler.update(expire)
+        self.assertEqual(len(handler.schedule), len(t))
+        for i in range(len(handler.schedule) - 1):
+            self.assertLess(handler.schedule[i], handler.schedule[i + 1])
+        self.assertIsNone(handler.last_delete)
+
+        # Should test _DeleteHandler working with cache
 
     def test_insert_buffer(self):
         """Test InsertBuffer working with SqliteCache."""

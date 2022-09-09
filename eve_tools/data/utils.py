@@ -1,11 +1,14 @@
 import hashlib
 import inspect
+import os
 import pickle
 import re
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Union, Callable, Coroutine, TYPE_CHECKING
 
+from eve_tools.config import DATA_DIR
 from eve_tools.log import getLogger
 
 logger = getLogger(__name__)
@@ -46,13 +49,15 @@ class _CacheRecord:
 
 @dataclass
 class InsertBuffer:
+    """Buffers cache.set to avoid repetitive insert transaction."""
 
     db: "ESIDBManager"
     table: str
     buffer: List[Tuple] = field(default_factory=list)  # [(key_hash, value, expires), ...]
     cap: int = 50
 
-    def flush(self):
+    def flush(self) -> None:
+        """Flushes buffer payload to database file. Buffer payload is cleared after flushing."""
         self.db.execute("BEGIN")
         for param in self.buffer:
             self.db.execute(f"INSERT OR REPLACE INTO {self.table} VALUES(?,?,?)", param)
@@ -60,19 +65,32 @@ class InsertBuffer:
         self.clear()
         logger.debug("Cache entries flushed")
 
-    def insert(self, entry: Tuple):
+    def insert(self, entry: Tuple) -> None:
+        """Inserts db entry to buffer. Flushes if ``cap`` is reached.
+
+        Args:
+            entry: (key, value, expires)
+                A database entry.
+        """
         if len(self.buffer) >= self.cap:
             self.flush()
 
         self.buffer.append(entry)
 
-    def select(self, key_hash):
+    def select(self, key_hash) -> Tuple:
+        """Selects value from buffer. Similar to cache.get.
+
+        Args:
+            key_hash: hash(key)
+                A hashed key, which is retrieved from hash_key() function.
+        """
         for b in self.buffer:
             if b[0] == key_hash:
                 return b
         return None
 
-    def clear(self):
+    def clear(self) -> None:
+        """Clears buffer paylaod. Resets to empty list."""
         del self.buffer
         self.buffer = []
 
@@ -100,6 +118,72 @@ class srcodeBuffer:
             srcode = inspect.getsource(func)
             cls.payload[key] = srcode
         return srcode
+
+
+class _DeleteHandler:
+    """Tracks ``expires`` time and deletes when the time has come."""
+
+    def __init__(self, db: "ESIDBManager", table: str):
+        self.db = db
+        self.table = table
+
+        self.schedule: List = []  # priority queue
+
+        # Read from local cache
+        db_dir = os.path.join(DATA_DIR, "db")
+        if not os.path.exists(db_dir):
+            # Race condition
+            try:
+                os.makedirs(db_dir)
+            except FileExistsError:
+                pass
+        self.path = os.path.realpath(os.path.join(db_dir, f"{db.db_name}-{table}-delete_schedule.tmp"))
+        if os.path.exists(self.path) and os.stat(self.path).st_size > 0:
+            with open(self.path, "rb") as f:
+                self.schedule = sorted(pickle.load(f))
+
+        self.last_delete: datetime = None
+
+    def update(self, expire: datetime) -> None:
+        """Adds a new expire time to keep track on, and deletes if any delete time has passed.
+
+        Args:
+            expire: datetime
+                A new expire time.
+        """
+        # Seperate two deletes by 5 minutes
+        minute = expire.minute
+        expire = expire.replace(minute=int(minute / 5) * 5, second=0, microsecond=0)
+        expire += timedelta(minutes=5)  # round up 5 minutes
+
+        if expire not in self.schedule:
+            self.schedule.append(expire)
+            self.schedule.sort()  # good enough for small list
+
+        # Find the latest time that triggers a delete
+        now = datetime.utcnow()
+        latest_expire = None
+        for i in range(len(self.schedule)):
+            t = self.schedule[i]
+            if t < now:
+                latest_expire = t
+            else:
+                break
+
+        if latest_expire is not None:
+            # Only deletes from db.
+            # If InsertBuffer entries expired, they will be dealt in later runs.
+            self.db.execute(f"DELETE FROM {self.table} WHERE expires < ?", (latest_expire,))
+            self.db.commit()
+            logger.debug("Cache DELETE attempted")
+            self.last_delete = datetime.utcnow()
+            for _ in range(i):  # remove all time that's passed
+                self.schedule.pop(0)
+
+    def save(self) -> None:
+        """Saves payload to local tmp file, serialize using pickle."""
+        with open(self.path, "wb") as f:
+            pickle.dump(self.schedule, f)
 
 
 # ---- Utility functions ---- #
@@ -153,7 +237,7 @@ def function_hash(func: Union[Callable, Coroutine]):
     this function hashes to a different value. If docstring is changed, hash should remain intact.
     """
     source_code = srcodeBuffer.getsource(func)
-    source_code = re.sub(r'"""[\w\W]+?"""\n', "", source_code)
+    source_code = re.sub(r'"""[\w\W]+?"""\n', "", source_code)  # remove docstring
     return "esi_function-{}-{}".format(
         func.__qualname__,
         hashlib.sha256(source_code.encode("utf-8")).hexdigest(),

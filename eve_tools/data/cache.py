@@ -6,7 +6,7 @@ from email.utils import parsedate
 from datetime import datetime, timedelta
 from typing import Union
 
-from .utils import _CacheRecordBaseClass, _CacheRecord, InsertBuffer, hash_key
+from .utils import _CacheRecordBaseClass, _CacheRecord, InsertBuffer, _DeleteHandler, hash_key
 from eve_tools.data import ESIDBManager
 from eve_tools.log import getLogger
 
@@ -72,6 +72,8 @@ class SqliteCache(BaseCache):
         self.table = table
         self.buffer = InsertBuffer(self.c, self.table)
         atexit.register(self.buffer.flush)
+        self.deleter = _DeleteHandler(self.c, self.table)
+        atexit.register(self.deleter.save)
 
         self._last_used = None  # used for testing
         super().__init__(esidb, table)
@@ -79,6 +81,10 @@ class SqliteCache(BaseCache):
 
     def set(self, key, value, expires: Union[str, int] = None):
         """Sets k/v pair with expires.
+
+        K-V pairs are first put into a buffer defined in self.buffer,
+        which then flushes to local database file if buffer is filed.
+        A delete handler will track ``expires`` parameter and execute DELETE if time has come.
 
         Args:
             key: An object returned from make_cache_key(), which is pickled and hashed using hash_key().
@@ -99,6 +105,7 @@ class SqliteCache(BaseCache):
         _h = hash_key(key)
         entry = (_h, pickle.dumps(value), expires)
         self.buffer.insert(entry)
+        self.deleter.update(expires)
         logger.debug("Cache entry set: %s", _h)
 
     def get(self, key, default=None):
@@ -108,11 +115,12 @@ class SqliteCache(BaseCache):
         Checks if db entry is expired and delete if necessary.
 
         Args:
-            key: An object returned from make_cache_key(), which is pickled and hashed using hash_key().
+            key: An object returned from make_cache_key().
             default: If cache returns nothing, returns a default value. Default None.
         """
         _h = hash_key(key)
-        row = self.c.execute(f"SELECT * FROM {self.table} WHERE key=?", (_h,)).fetchone()  # should use fetchall and check
+        row = self.c.execute(f"SELECT * FROM {self.table} WHERE key=?", (_h,)).fetchone()
+        # should use fetchall and check
         if not row:
             row = self.buffer.select(_h)
         if not row:
