@@ -1,15 +1,15 @@
 import unittest
 from datetime import datetime
 
-from eve_tools.ESI import ESIClient
+from eve_tools.ESI import ESIClient, ESIRequestChecker
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
-from eve_tools.ESI.esi import _RequestChecker, ESIResponse
+from eve_tools.ESI.esi import ESIResponse
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
 from eve_tools.exceptions import InvalidRequestError, ESIResponseError
 from eve_tools.data import CacheDB, SqliteCache
 from eve_tools.tests.utils import request_from_ESI
 from eve_tools.log import getLogger
-from .utils import internet_on
+from .utils import internet_on, TestInit
 
 logger = getLogger("test_esi")
 
@@ -187,28 +187,29 @@ class TestESI(unittest.TestCase):
         self.assertEqual(len(resp), 3)
 
 
-class TestRequestChecker(unittest.TestCase):
-    def setUp(self) -> None:
-        self.checker = _RequestChecker()
-        self.checker_cache = SqliteCache(CacheDB, "checker_cache")
+class TestRequestChecker(unittest.TestCase, TestInit):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.checker_cache = SqliteCache(cls.TESTDB, "checker_cache")
+        cls.checker = ESIRequestChecker(cls.checker_cache)
 
     @unittest.skipUnless(internet_on(), "no internet connection")
     def test_check_type_id(self):
-        """Tests _RequestChecker._check_request_type_id()."""
+        """Tests ESIRequestChecker.check_type_id()."""
         type_id = 12005
-        res = request_from_ESI(self.checker._check_request_type_id, type_id, cache=self.checker_cache)
+        res = request_from_ESI(self.checker.check_type_id, type_id, cache=self.checker_cache)
         self.assertTrue(res)
-        self.assertEqual(self.checker.requests, 1)
+        # self.assertEqual(self.checker.requests, 1)
 
         type_id = 12007  # blocked: not a type_id
-        res = request_from_ESI(self.checker._check_request_type_id, type_id, cache=self.checker_cache)
+        res = request_from_ESI(self.checker.check_type_id, type_id, cache=self.checker_cache)
         self.assertFalse(res)
-        self.assertEqual(self.checker.requests, 1)
+        # self.assertEqual(self.checker.requests, 1)
 
         type_id = 63715  # blocked: ESI endpoint
-        res = request_from_ESI(self.checker._check_request_type_id, type_id, cache=self.checker_cache)
+        res = request_from_ESI(self.checker.check_type_id, type_id, cache=self.checker_cache)
         self.assertFalse(res)
-        self.assertEqual(self.checker.requests, 2)  # request sent
+        # self.assertEqual(self.checker.requests, 2)  # request sent
 
         # Test: default raise behavior
         type_id = 12007
@@ -252,6 +253,73 @@ class TestRequestChecker(unittest.TestCase):
         type_id = 1234567890
         resp = ESIClient.head("/universe/categories/", type_id=type_id, raises=False)
         self.assertIsNotNone(resp)
+
+        # Test: type_id used in different endpoints & params share the cache
+        type_id = 12007
+        res = request_from_ESI(self.checker.check_type_id, type_id, cache=self.checker_cache)
+        hits, miss = self.checker_cache.hits, self.checker_cache.miss
+
+        default_checker_cache = ESIClient.checker.cache
+        ESIClient.checker.cache = self.checker_cache
+        ESIClient.head("/universe/types/{type_id}/", type_id=type_id, raises=False)
+        self.assertEqual(hits + 1, self.checker_cache.hits)
+        self.assertEqual(miss, self.checker_cache.miss)
+
+        ESIClient.head("/markets/{region_id}/history/", region_id=10000002, type_id=12007, raises=False)
+        self.assertEqual(miss, self.checker_cache.miss)
+        self.assertEqual(hits + 2, self.checker_cache.hits)  # should be a hit
+
+        ESIClient.head("/markets/{region_id}/history/", region_id=10000003, type_id=12007, raises=False)
+        self.assertEqual(miss, self.checker_cache.miss)
+        self.assertEqual(hits + 3, self.checker_cache.hits)  # should be a hit
+
+        hits, miss = self.checker_cache.hits, self.checker_cache.miss
+        ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000002,
+            async_loop=["type_id"],
+            type_id=[12005, 12006, 12007],
+        )
+        self.assertEqual(miss + 1, self.checker_cache.miss)  # 12006 miss
+        self.assertEqual(hits + 2, self.checker_cache.hits)  # 12005 & 12007 hit
+
+        hits, miss = self.checker_cache.hits, self.checker_cache.miss
+        ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000003,  # new region
+            async_loop=["type_id"],
+            type_id=[12006, 12007, 12005, 1405],
+        )
+        self.assertEqual(miss + 1, self.checker_cache.miss)  # 1405 miss
+        self.assertEqual(hits + 3, self.checker_cache.hits)  # 12005 & 12006 & 12007 hit
+
+        hits, miss = self.checker_cache.hits, self.checker_cache.miss
+        ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000003,  # new region
+            async_loop=["type_id"],
+            type_id=[1405, 12007, 12006, 12005],
+        )
+        self.assertEqual(hits + 4, self.checker_cache.hits)
+
+        # Test: change checker and still works
+        checker = ESIRequestChecker(self.checker_cache)
+        ESIClient.setChecker(checker)
+        hits, miss = self.checker_cache.hits, self.checker_cache.miss
+        ESIClient.get(
+            "/markets/{region_id}/history/",
+            region_id=10000003,  # new region
+            async_loop=["type_id"],
+            type_id=[1405, 12007, 12006, 12005],
+        )
+        self.assertEqual(hits + 4, self.checker_cache.hits)
+        self.assertEqual(miss, self.checker_cache.miss)
+
+        ESIClient.checker.cache = default_checker_cache
+
+    def tearDown(self) -> None:
+        self.TESTDB.clear_db()
+        self.checker_cache.buffer.clear()
 
 
 class TestSSO(unittest.TestCase):

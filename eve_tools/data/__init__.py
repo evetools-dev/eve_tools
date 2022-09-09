@@ -1,5 +1,6 @@
 from .db import ESIDBManager
-from .cache import SqliteCache, make_cache_key, function_hash, CacheStats
+from .cache import SqliteCache
+from .utils import make_cache_key, function_hash, CacheStats
 
 ESIDB = ESIDBManager("esi")
 CacheDB = ESIDBManager("cache")
