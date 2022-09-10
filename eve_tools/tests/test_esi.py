@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime
 
 from eve_tools.ESI import ESIClient, ESIRequestChecker
+from eve_tools.ESI.formatter import ESIFormatter
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
 from eve_tools.ESI.esi import ESIResponse
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
@@ -12,6 +13,19 @@ from eve_tools.log import getLogger
 from .utils import internet_on, TestInit
 
 logger = getLogger("test_esi")
+
+
+class TestFormatter(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.formatter = ESIFormatter()
+
+    def test_format_key(self):
+        key_formatter = self.formatter._ESIFormatter__format_key
+        key = "/characters/{character_id}/mail/"
+        res = key_formatter(key)
+        self.assertIsInstance(res, str)
+        self.assertEqual(res, "characters_character_id_mail")
 
 
 class TestESI(unittest.TestCase):

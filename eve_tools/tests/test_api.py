@@ -18,9 +18,7 @@ class TestMarket(unittest.TestCase, TestInit):
     @unittest.skipUnless(TestInit.config.configured, "test no configured")
     @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_structure_types(self):
-        resp = request_from_ESI(
-            get_structure_types, self.config.structure_name, self.config.cname
-        )
+        resp = request_from_ESI(get_structure_types, self.config.structure_name, self.config.cname)
         resp_cache = get_structure_types(self.config.structure_name, self.config.cname)
 
         # Test: api returns correct value
@@ -78,9 +76,7 @@ class TestMarket(unittest.TestCase, TestInit):
                 ]
             ),
         )
-        self.assertTrue(
-            (resp["region_id"] == 10000002).all()
-        )  # all have region_id=10000002
+        self.assertTrue((resp["region_id"] == 10000002).all())  # all have region_id=10000002
         self.assertTrue((resp["type_id"] == 12005).all())  # all have type_id=12005
         self.assertGreater(len(resp), 100)
 
@@ -90,9 +86,7 @@ class TestMarket(unittest.TestCase, TestInit):
 
     @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_type_history_with_reduce(self):
-        resp: pd.DataFrame = request_from_ESI(
-            get_type_history, 10000002, 12005, reduce_volume
-        )
+        resp: pd.DataFrame = request_from_ESI(get_type_history, 10000002, 12005, reduce_volume)
         resp_cache: pd.DataFrame = get_type_history(10000002, 12005, reduce_volume)
 
         # Test: api returns correct value
@@ -108,42 +102,40 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
-    # def test_get_market_history(self):
-    #     _s = time.time()
-    #     resp: pd.DataFrame = get_market_history("The Forge", reduces=reduce_volume)
-    #     resp_time = time.time() - _s
+    def test_get_market_history(self):
+        region = "The Bleak Lands"  # with only ~2500 types
 
-    #     _s = time.time()
-    #     resp_cache: pd.DataFrame = get_market_history(
-    #         "The Forge", reduces=reduce_volume
-    #     )
-    #     resp_cache_time = time.time() - _s
+        _s = time.time()
+        resp: pd.DataFrame = request_from_ESI(get_market_history, region, reduces=reduce_volume)
+        resp_time = time.time() - _s
 
-    #     if resp_time > 10:  # retrieved from ESI
-    #         self.assertGreater(resp_time, resp_cache_time)
+        _s = time.time()
+        resp_cache: pd.DataFrame = get_market_history("The Forge", reduces=reduce_volume)
+        resp_cache_time = time.time() - _s
 
-    #     # Test: api returns correct value:
-    #     self.assertGreater(len(resp), 10000)  # at least 10k types in Jita
-    #     self.assertLess(len(resp), 100000)  # should correctly reduce # columns
-    #     self.assertIn(12005, resp["type_id"].values)
-    #     ishtar = resp.loc[resp["type_id"] == 12005]
-    #     self.assertGreater(int(ishtar["volume_seven_days"]), 1)
+        if resp_time > 10:  # cache speeds up
+            self.assertGreater(resp_time, resp_cache_time)
 
-    #     # Test: cache returns correctly
-    #     self.assertTrue(resp.equals(resp_cache))
-    #     self.assertEqual(set(resp.columns), set(resp_cache.columns))
+        # Test: api returns correct value:
+        self.assertGreater(len(resp), 1000)
+        self.assertLess(len(resp), 100000)  # should correctly reduce number of columns
+        if 12005 in resp["type_id"].values:
+            ishtar = resp.loc[resp["type_id"] == 12005]
+            self.assertGreater(int(ishtar["volume_seven_days"]), 0.01)
 
-    #     # Test: custom type_ids yields correct behavior
-    #     resp = get_market_history(
-    #         "The Forge", type_ids=[12005, 979], reduces=reduce_volume
-    #     )
-    #     resp_cache = get_market_history(
-    #         "The Forge", type_ids=[12005, 979], reduces=reduce_volume
-    #     )
-    #     self.assertEqual(len(resp), 2)
-    #     self.assertIn(12005, resp["type_id"].values)
-    #     self.assertIn(979, resp["type_id"].values)
-    #     self.assertTrue(resp.equals(resp_cache))
+        # Test: cache returns correctly
+        self.assertTrue(resp.equals(resp_cache))
+        self.assertEqual(set(resp.columns), set(resp_cache.columns))
+
+        # Test: custom type_ids yields correct behavior
+        resp = request_from_ESI(
+            get_market_history, "The Forge", type_ids=[12005, 979], reduces=reduce_volume
+        )
+        resp_cache = get_market_history("The Forge", type_ids=[12005, 979], reduces=reduce_volume)
+        self.assertEqual(len(resp), 2)
+        self.assertIn(12005, resp["type_id"].values)
+        self.assertIn(979, resp["type_id"].values)
+        self.assertTrue(resp.equals(resp_cache))
 
     @unittest.skipUnless(internet_on(), "no internet connection")
     def test_get_station_market_one_type(self):
@@ -172,9 +164,7 @@ class TestMarket(unittest.TestCase, TestInit):
             len(resp_sell.merge(resp).drop_duplicates()),
             len(resp_sell.drop_duplicates()),
         )  # sell/buy is a subset of "all" orders
-        self.assertEqual(
-            len(resp_buy.merge(resp).drop_duplicates()), len(resp_buy.drop_duplicates())
-        )
+        self.assertEqual(len(resp_buy.merge(resp).drop_duplicates()), len(resp_buy.drop_duplicates()))
 
         # Test: cache return matches ESI return
         self.assertTrue(resp.equals(resp_cache))
@@ -193,12 +183,8 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertIn(12005, resp["type_id"].values)
 
         # Test: buy/sell flag correct
-        resp_sell: pd.DataFrame = request_from_ESI(
-            get_station_market, station_name, order_type="sell"
-        )
-        resp_buy: pd.DataFrame = request_from_ESI(
-            get_station_market, station_name, order_type="buy"
-        )
+        resp_sell: pd.DataFrame = request_from_ESI(get_station_market, station_name, order_type="sell")
+        resp_buy: pd.DataFrame = request_from_ESI(get_station_market, station_name, order_type="buy")
         self.assertEqual(len(resp), len(resp_sell) + len(resp_buy))
         self.assertTrue((resp_sell["is_buy_order"] == 0).all())
         self.assertTrue((resp_buy["is_buy_order"] == 1).all())
@@ -206,9 +192,7 @@ class TestMarket(unittest.TestCase, TestInit):
             len(resp_sell.merge(resp).drop_duplicates()),
             len(resp_sell.drop_duplicates()),
         )  # sell/buy is a subset of "all" orders
-        self.assertEqual(
-            len(resp_buy.merge(resp).drop_duplicates()), len(resp_buy.drop_duplicates())
-        )
+        self.assertEqual(len(resp_buy.merge(resp).drop_duplicates()), len(resp_buy.drop_duplicates()))
 
         # Test: cache return matches ESI return
         self.assertTrue(resp.equals(resp_cache))
@@ -280,9 +264,7 @@ class TestSearch(unittest.TestCase, TestInit):
     @unittest.skipUnless(TestInit.config.configured, "test no configured")
     @unittest.skipUnless(internet_on(), "no internet connection")
     def test_search_structure_id(self):
-        resp = request_from_ESI(
-            search_structure_id, self.config.structure_name, self.config.cname
-        )
+        resp = request_from_ESI(search_structure_id, self.config.structure_name, self.config.cname)
         resp_cache = search_structure_id(self.config.structure_name, self.config.cname)
         self.assertEqual(resp, resp_cache)
         self.assertGreater(resp, 1000000000000)
@@ -300,9 +282,7 @@ class TestSearch(unittest.TestCase, TestInit):
         resp_cache = search_station(60000016)
 
         self.assertIsInstance(resp, Station)
-        self.assertEqual(
-            resp.name, "Tasabeshi VIII - Moon 13 - CBD Corporation Storage"
-        )
+        self.assertEqual(resp.name, "Tasabeshi VIII - Moon 13 - CBD Corporation Storage")
         self.assertEqual(resp.region_id, 10000033)
         self.assertEqual(resp, resp_cache)
 

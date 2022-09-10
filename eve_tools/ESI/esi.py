@@ -6,6 +6,7 @@ from tqdm.asyncio import tqdm_asyncio
 from typing import Iterable, Optional, Union, List, Tuple
 
 from .checker import ESIRequestChecker
+from .formatter import ESIFormatter
 from .token import ESITokens, Token
 from .metadata import ESIMetadata, ESIRequest
 from .application import ESIApplications, Application
@@ -101,6 +102,9 @@ class ESI(object):
         self.__async_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
         self.__event_loop = asyncio.get_event_loop()
 
+        ### Formatter
+        self.__formatter = ESIFormatter()
+
         ### Session record
         self._record_session = True  # default recording
         self._record: _SessionRecord = _SessionRecord()
@@ -142,13 +146,20 @@ class ESI(object):
     def checker(self) -> ESIRequestChecker:
         return self.__request_checker
         
+    def setFormatter(self, fmt: ESIFormatter):
+        self._formatter = fmt
+
+    @property
+    def formatter(self):
+        return self.__formatter
+
     @_session_recorder(fields="timer")
     def get(
         self,
         key: str,
         async_loop: Optional[List] = None,
         **kwd,
-    ) -> Union[dict, List[dict], None]:
+    ) -> Union[ESIResponse, List[ESIResponse], None]:
         """Requests GET an ESI API.
 
         Simplifies coroutine execution and send asynchronous GET request to ESI server.
@@ -280,7 +291,7 @@ class ESI(object):
         return ret
 
     @_session_recorder(fields="timer")
-    def head(self, key: str, **kwd) -> dict:
+    def head(self, key: str, **kwd) -> ESIResponse:
         """Request HEAD an ESI API.
 
         Checks input parameters and send a synchronous HEAD request to ESI server.
@@ -328,7 +339,7 @@ class ESI(object):
         self.__singular_req = False
         return ret
 
-    async def request(self, method: str, key: str, **kwd) -> Union[dict, None]:
+    async def request(self, method: str, key: str, **kwd) -> Union[ESIResponse, None]:
         """Sends one request to an ESI API.
 
         Checks input parameters and send one asynchronous request to ESI server.
@@ -402,12 +413,15 @@ class ESI(object):
         # where I need to use epoll (or select) to interrupt the blocking accept and do something else (like servering a client).
         # Something cool and slightly difficult to understand: https://stackoverflow.com/questions/49005651/how-does-asyncio-actually-work
         # self.async_request = ESIRequestError(raises=raises)(self.async_request)
-        res = await ESIRequestError(raises=self.__raises)(self.async_request)(
+        resp: ESIResponse = await ESIRequestError(raises=self.__raises)(self.async_request)(
             api_request, method, checks=checks
         )
 
         self.__raises = None  # back to default
-        return res
+
+        # Apply formatter to format the response.
+        ret = self.__formatter(key, resp)
+        return ret
 
     @_session_recorder(exclude="timer")
     async def async_request(

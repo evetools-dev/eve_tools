@@ -321,7 +321,7 @@ def _session_recorder(
 
 
 def cache_check_request(func: Coroutine):
-    # func has signature: async def _check_*(self, *) -> boolh
+    # func has signature: async def _check_*(self, *) -> bool
     @wraps(func)
     async def cache_check_request_wrapped(_self: "ESIRequestChecker", *args, **kwd):
         # Caches _RequestChecker methods
