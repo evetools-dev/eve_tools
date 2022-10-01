@@ -65,10 +65,18 @@ class ESIRequest:
 
     @property
     def real_url(self) -> URL:
+        """Similar to aiohttp's request_info.real_url."""
         # This is very different from aiohttp's request_info.real_url, 
         # which uses URL class in a more informative way.
         # This method is only intended for printing exception message correctly.
+        if self.url is None:
+            return URL()
         return URL(self.url)
+
+    @property
+    def rid(self):
+        """Request id."""
+        return (self.request_key, self.request_type, self.kwd, "request_id")
 
 
 class ESIMetadata(object):
