@@ -1,12 +1,12 @@
 import asyncio
 import aiohttp
-import copy
 from dataclasses import dataclass
 from tqdm.asyncio import tqdm_asyncio
 from typing import Iterable, Optional, Union, List, Tuple
 
 from .checker import ESIRequestChecker
 from .formatter import ESIFormatter
+from .parser import ESIRequestParser
 from .token import ESITokens, Token
 from .metadata import ESIMetadata, ESIRequest
 from .application import ESIApplications, Application
@@ -65,11 +65,22 @@ class ESIResponse:
     def __len__(self):
         return len(self.data)
 
+    def __repr__(self) -> str:
+        return f"<Response [{self.status}]>"
+
     def raise_for_status(self):
         # Please note that this raise_for_status() is only intended for printing out useful exception message.
         # This method does not recreate aiohttp.ClientResponse's raise_for_status().
         if self.status >= 400:
             raise ESIResponseError(self.status, self.request_info, self.reason)
+
+    @property
+    def ok(self) -> bool:
+        """Returns ``True`` if ``status`` is ``200`` or ``304``, ``False`` if not.
+
+        This is **not** a check for ``200 OK``.
+        """
+        return self.status == 200 or self.status == 304
 
 
 class ESI(object):
@@ -81,13 +92,11 @@ class ESI(object):
         ESI class is singleton by design.
     """
 
-    metaurl = "https://esi.evetech.net/latest"
     default_callback = "https://localhost/callback/"
 
     def __init__(self):
 
         self.apps = ESIApplications()
-        self._metadata = ESIMetadata()
 
         ### Async request
         # Can't put this ClientSession instance to be a global variable.
@@ -113,6 +122,9 @@ class ESI(object):
         self.__request_checker = ESIRequestChecker()
         self.__singular_req = False  # Single/multiple async request(s)
         self.__raises = None  # user defined raise flag
+
+        ### Request parser
+        self.__parser = ESIRequestParser(self.apps)
 
         logger.info("ESI instance initiated")
 
@@ -152,6 +164,10 @@ class ESI(object):
     @property
     def formatter(self):
         return self.__formatter
+
+    @property
+    def parser(self) -> ESIRequestParser:
+        return self.__parser
 
     @_session_recorder(fields="timer")
     def get(
@@ -197,9 +213,6 @@ class ESI(object):
                 EVE ESI does not require headers info, but supplying with User-Agent, etc., is recommended.
             kwd.cname: str
                 A string of character name. Token with cname would be used for the request.
-            kwd.generate_token: bool
-                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
-                Default generating tokens.
             kwd.checks: bool
                 Whether to use _RequestChecker to block incorrect requests, default True.
 
@@ -317,9 +330,6 @@ class ESI(object):
                 EVE ESI does not require headers info, but supplying with User-Agent, etc., is recommended.
             kwd.cname: str
                 A string of character name. Token with cname would be used for the request.
-            kwd.generate_token: bool
-                A bool that specifies in case token doesn't exist, whether to go through token generation or raise errors.
-                Default generating tokens
             kwd.checks: bool
                 Whether to use _RequestChecker to block incorrect requests, default True.
 
@@ -373,54 +383,33 @@ class ESI(object):
         See also:
             ESI.get(): sends asynchronous request GET to an API.
         """
-        self.__check_key(key)
-
-        api_request = self._metadata[key]
-        if api_request.request_type not in ["get", "head"]:
-            raise NotImplementedError(f"Request type {api_request.request_type} is not supported.")
-
-        api_request.kwd = copy.deepcopy(kwd)
-
-        self.__check_method(api_request, method)
-
-        params = kwd.get("params", {})
-        api_request.params.update(params)
-
-        headers = kwd.get("headers", {})
-        generate_token = kwd.get("generate_token", True)
-        # if has security and has no Authorization field, get auth token.
-        if api_request.security and not headers.get("Authorization"):
-            app = self.apps.search_scope(" ".join(api_request.security))
-            with ESITokens(app) as tokens:
-                cname = kwd.pop("cname", "any")
-                if generate_token and not tokens.exist(cname):
-                    logger.debug("Generating token for request: %s %s", method, key)
-                    token = tokens.generate()
-                else:
-                    token = tokens[cname]
-                api_request.token = token
-                headers.update(self.__get_auth_headers(token))
-
-        api_request.headers.update(headers)
 
         self.__raises = kwd.pop("raises", None)
         checks = kwd.pop("checks", True)
 
-        self.__parse_request_keywords(api_request, kwd)
+        api_request = await self.__parser(key, method, **kwd)
 
         # Using asyncio.run() is problematic because it creates a new event loop (or maybe other advanced/mysterious reasons?).
         # For my application (web request), aiohttp kind of like non-blocking accept in C,
         # where I need to use epoll (or select) to interrupt the blocking accept and do something else (like servering a client).
         # Something cool and slightly difficult to understand: https://stackoverflow.com/questions/49005651/how-does-asyncio-actually-work
         # self.async_request = ESIRequestError(raises=raises)(self.async_request)
-        resp: ESIResponse = await ESIRequestError(raises=self.__raises)(self.async_request)(
+        res: ESIResponse = await ESIRequestError(raises=self.__raises)(self.async_request)(
             api_request, method, checks=checks
         )
+
+        if res is not None:
+            etag = res.headers.get("Etag")
+            if res.status == 304:
+                # Uses etag cache
+                res.data = self.__parser._get_etag_payload(api_request.rid)
+            elif res.status == 200:
+                self.__parser._set_etag(api_request.rid, etag, res.data)
 
         self.__raises = None  # back to default
 
         # Apply formatter to format the response.
-        ret = self.__formatter(key, resp)
+        ret = self.__formatter(key, res)
         return ret
 
     @_session_recorder(exclude="timer")
@@ -467,39 +456,41 @@ class ESI(object):
         if method == "get":
             async with self.__async_session.get(
                 api_request.url, params=api_request.params, headers=api_request.headers
-            ) as req:
-                api_request.url = str(req.url)  # URL class implements str
-                data = await req.json()
-                resp = ESIResponse(
-                    status=req.status,
-                    method=req.method,
-                    headers=dict(req.headers),
+            ) as resp:
+                api_request.url = str(resp.url)  # URL class implements str
+                data = None
+                if resp.status != 304:
+                    data = await resp.json()
+                ret = ESIResponse(
+                    status=resp.status,
+                    method=resp.method,
+                    headers=dict(resp.headers),
                     request_info=api_request,
                     data=data,
-                    expires=req.headers.get("Expires"),
-                    reason=req.reason,
-                    error_remain=int(req.headers.get("x-esi-error-limit-remain")),
-                    error_reset=int(req.headers.get("x-esi-error-limit-reset")),
+                    expires=resp.headers.get("Expires"),
+                    reason=resp.reason,
+                    error_remain=int(resp.headers.get("x-esi-error-limit-remain")),
+                    error_reset=int(resp.headers.get("x-esi-error-limit-reset")),
                 )
 
         elif method == "head":
             async with self.__async_session.head(
                 api_request.url, params=api_request.params, headers=api_request.headers
-            ) as req:
-                api_request.url = str(req.url)
-                resp = ESIResponse(
-                    status=req.status,
-                    method=req.method,
-                    headers=dict(req.headers),
+            ) as resp:
+                api_request.url = str(resp.url)
+                ret = ESIResponse(
+                    status=resp.status,
+                    method=resp.method,
+                    headers=dict(resp.headers),
                     request_info=api_request,
                     data=None,
-                    expires=req.headers.get("Expires"),
-                    reason=req.reason,
-                    error_remain=int(req.headers.get("x-esi-error-limit-remain")),
-                    error_reset=int(req.headers.get("x-esi-error-limit-reset")),
+                    expires=resp.headers.get("Expires"),
+                    reason=resp.reason,
+                    error_remain=int(resp.headers.get("x-esi-error-limit-remain")),
+                    error_reset=int(resp.headers.get("x-esi-error-limit-reset")),
                 )
 
-        return resp
+        return ret
 
     def add_app_generate_token(self, clientId: str, scope: str, callbackURL: Optional[str] = None) -> None:
         """Adds a new Application to the client and generate a token for it.
@@ -540,147 +531,6 @@ class ESI(object):
 
         with ESITokens(new_app) as token:
             token.generate()
-
-    def __get_auth_headers(self, token: Token) -> dict:
-        # Read from local token file and append to request headers.
-        access_token = token.access_token
-        auth_headers = {"Authorization": "Bearer {}".format(access_token)}
-        return auth_headers
-
-    def __check_key(self, key: str) -> None:
-        if key not in self._metadata.paths:
-            logger.error("Invalid request key: %s", key)
-            raise ValueError(f"{key} is not a valid request key.")
-
-    def __check_method(self, api_request: ESIRequest, method: str) -> None:
-        """Checks if method is supported by the ESIRequest.
-        Assume only one request_type (one of "get", "post", etc.) for api_request.
-        """
-        req_method = api_request.request_type
-        if req_method == method:
-            return
-
-        if method == "head" and req_method == "get":
-            return
-
-        logger.error("Invalid request method: %s", method)
-        raise ValueError(f"Request method {method} is not supported by {api_request.request_key} request.")
-
-    def __parse_request_keywords(self, api_request: ESIRequest, keywords: dict) -> None:
-        """Parses and checks user provided parameters.
-
-        Checks fields in keywords if necessary parameters are given.
-        Fills in ESIRequest with parameters parsed from keywords.
-
-        Args:
-            api_request: ESIRequest
-                A struct holding request info for an API request.
-                Necessary info (url, params, headers) is filled in according to metadata and some facts.
-            keywords: dict
-                Kwd argument provided by user, containing headers, params, and other necessary fields for the API.
-                Missing keywords (such as character_id) raises errors.
-
-        Facts:
-            _in: path
-                1. Param.required = True
-                2. Appears as {Param.name} in url: https://.../characters/{character_id}/orders/
-                3. Pass in with kwd argument, not params, headers, or data
-                4. Param.default is None
-            _in: query
-                1. Pass in with either kwd or params, not headers or data
-                2. Appears as ?query=value in url: https://.../?datasource=tranquility
-            _in: header
-                1. Request token has been updated to headers before calling this function
-                2. ESI marks "token" param as optional
-        """
-
-        path_params = {}  # params for request url.format()
-        query_params = {}  # params for url/?{key1}={value1}?{key2}={value2}...
-        headers = keywords.pop("headers", {})
-
-        cid = 0
-        if api_request.token is not None:
-            cid = api_request.token.character_id
-
-        for api_param_ in api_request.parameters:
-            if api_param_._in == "path":
-                key = api_param_.name
-                value = self.__parse_request_keywords_in_path(keywords, key, api_param_.dtype, cid)
-                path_params.update({key: value})
-                # dict unpacking later
-            elif api_param_._in == "query":
-                default = api_param_.default
-                key = api_param_.name
-                value = self.__parse_request_keywords_in_query(
-                    keywords,
-                    key,
-                    api_param_.required,
-                    api_param_.default,
-                    api_param_.dtype,
-                )
-                if value is not None:
-                    query_params.update({key: value})  # update if value is given
-                elif default is not None:
-                    query_params.update({key: default})  # else update if default is set
-            elif api_param_._in == "header":  # not "headers"
-                # usually not reached
-                key = api_param_.name
-                value = self.__parse_request_keywords_in_header(
-                    headers, key, api_param_.required, api_param_.dtype
-                )
-                if value is not None:
-                    headers.update({key: value})
-
-        url = api_request.request_key
-        url = url.format(**path_params)
-        api_request.params.update(query_params)
-        api_request.headers.update(headers)
-        api_request.url = self.metaurl + url  # urljoin is difficult to deal with...
-
-    @staticmethod
-    def __parse_request_keywords_in_path(where: dict, key: str, dtype: str, cid: int = 0) -> str:
-        # dtype is not checked yet. Checking it needs to parse "schema" field and integerate into "dtype",
-        # and needs to find a way to fit user input to the dtype field.
-        # No need to check Param.required because Param._in == "path" => Param.required == True
-        if key == "character_id" and cid > 0 and "character_id" not in where:
-            # Prioritizes user input character_id
-            return cid
-        value = where.pop(key, None)
-        if value is None:
-            raise KeyError(f'Missing key "{key}" in keywords.')
-        return value
-
-    @staticmethod
-    def __parse_request_keywords_in_query(
-        where: dict, key: str, required: bool, default, dtype: str
-    ) -> str:
-        value = where.pop(key, None)
-        params = where.get("params")
-        value2 = None
-        if params:
-            value2 = params.get(key)
-
-        if value and value2:
-            raise KeyError(f'Duplicate key "{key}" in both keywords and params.')
-
-        if value is None and value2 is None and required and default is None:
-            raise KeyError(f'Missing key "{key}" in keywords.')
-
-        if value is None and value2 is None:
-            return default
-        if value is not None:
-            return value
-        if value2 is not None:
-            return value2
-
-    @staticmethod
-    def __parse_request_keywords_in_header(where: dict, key: str, required: bool, dtype: str) -> str:
-        value = where.pop(key, None)
-        if not required:
-            return value
-        if value is None:
-            raise KeyError(f'Missing key "{key}" in keywords.')
-        return value
 
     def _start_record(self):
         """Starts recording useful response info."""

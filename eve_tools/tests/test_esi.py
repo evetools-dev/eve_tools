@@ -1,11 +1,15 @@
 import unittest
 from datetime import datetime
+from yarl import URL
 
 from eve_tools.ESI import ESIClient, ESIRequestChecker
 from eve_tools.ESI.formatter import ESIFormatter
+from eve_tools.ESI.metadata import ESIRequest
+from eve_tools.ESI.parser import ESIRequestParser, ETagEntry
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
 from eve_tools.ESI.esi import ESIResponse
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
+from eve_tools.data.utils import hash_key
 from eve_tools.exceptions import InvalidRequestError, ESIResponseError
 from eve_tools.data import CacheDB, SqliteCache
 from eve_tools.tests.utils import request_from_ESI
@@ -128,7 +132,7 @@ class TestESI(unittest.TestCase):
         # Make a correct request first
         resp = ESIClient.get("/markets/{region_id}/history/", region_id=10000002, type_id=12005)
         self.assertIsInstance(resp, ESIResponse)
-        self.assertEqual(resp.status, 200)
+        self.assertTrue(resp.ok)
 
         resp = ESIClient.head("/markets/{region_id}/history/", region_id=10000002, type_id=12005)
         self.assertIsInstance(resp, ESIResponse)
@@ -335,6 +339,54 @@ class TestRequestChecker(unittest.TestCase, TestInit):
         self.TESTDB.clear_db()
         self.checker_cache.buffer.clear()
 
+
+class TestParser(unittest.TestCase, TestInit):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.etag_cache = SqliteCache(cls.TESTDB, "etag_cache")
+        cls.parser = ESIRequestParser(ESIClient.apps, cls.etag_cache)
+
+    def test_etag(self):
+        req = ESIRequest("test key", "get", kwd={"cid": 123, "sid": 234})
+        etag = "test_etag-123456"
+        payload = 12005
+
+        # Test: set_etag
+        self.parser._set_etag(req.rid, etag, payload)
+
+        entry: ETagEntry = self.etag_cache.get(req.rid)
+        self.assertIsNotNone(entry)
+        self.assertIsInstance(entry, ETagEntry)
+        self.assertEqual(entry.etag, etag)
+        self.assertEqual(entry.payload, payload)
+
+        # Test: get_etag
+        self.assertEqual(self.parser._get_etag(req.rid), etag)
+
+        ret = self.parser._get_etag("some nonexisting rid")
+        self.assertEqual(ret, "")  # "ETag" : "" is allowed in http
+
+        # Test: get_etag_payload
+        self.assertEqual(self.parser._get_etag_payload(req.rid), payload)
+
+        ret = self.parser._get_etag_payload("some nonexisting rid")
+        self.assertIsNone(ret)  # payload should be None if non-existing
+
+    def tearDown(self) -> None:
+        self.TESTDB.clear_table("etag_cache")
+        self.etag_cache.buffer.clear()
+
+
+class TestMetadata(unittest.TestCase):
+
+    def test_request_info(self):
+        """Test ESIRequest()."""
+        req = ESIRequest("test key", "get", kwd={"cid": 123, "sid": 234})
+        req2 = ESIRequest("test key", "get", kwd={"sid": 234, "cid": 123})
+        self.assertEqual(req.rid, req2.rid)
+
+        url = req.real_url
+        self.assertEqual(url, URL())  # empty url
 
 class TestSSO(unittest.TestCase):
     def test_pc_copy(self):

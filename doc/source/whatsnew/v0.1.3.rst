@@ -11,6 +11,7 @@ New features
 * Change default logging handler to RotatingFileHandler (or ConcurrentRotatingFileHandler under win32)
 * Add database operation record to keep track of number of calls and time spent
 * Seperate ``RequestChecker`` from ``ESI`` class, making check methods customizable
+* Add ``ESIRequestParser`` class
 
 Performance improvements
 ------------------------
@@ -18,6 +19,7 @@ Performance improvements
 * Buffer INSERT database call to reduce number of transactions
 * Buffer inspect.getsource to reduce make_cache_key speed overhead
 * Tracks cache entry ``expires`` and DELETE when time has passed
+* Support ``If-None-Match`` and ``Etag`` HTTP headers
 
 
 Contributors
