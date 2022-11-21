@@ -45,6 +45,7 @@ class ESIRequestChecker(metaclass=_NonOverridable):
     """
 
     def __init__(self, cache: SqliteCache = ...) -> None:
+        self.enabled = True
         self.raise_flag = False
         self.requests = 0  # just for fun
 
@@ -57,6 +58,9 @@ class ESIRequestChecker(metaclass=_NonOverridable):
         self.invTypes = pd.read_csv(os.path.join(SDE_DIR, "invTypes.csv.bz2"))
 
     async def __call__(self, api_request: ESIRequest, raise_flag: bool = False) -> bool:
+        if not self.enabled:
+            return True
+            
         self.raise_flag = raise_flag
         return await self.__check_request(api_request)
 
@@ -96,6 +100,8 @@ class ESIRequestChecker(metaclass=_NonOverridable):
             api_request.blocked = True
             if self.raise_flag is True and error is not None:
                 raise error from None
+            else:
+                return self.raise_flag
 
         return valid
 

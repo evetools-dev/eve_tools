@@ -7,9 +7,8 @@ from eve_tools.ESI.formatter import ESIFormatter
 from eve_tools.ESI.metadata import ESIRequest
 from eve_tools.ESI.parser import ESIRequestParser, ETagEntry
 from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
-from eve_tools.ESI.esi import ESIResponse
+from eve_tools.ESI.response import ESIResponse
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
-from eve_tools.data.utils import hash_key
 from eve_tools.exceptions import InvalidRequestError, ESIResponseError
 from eve_tools.data import CacheDB, SqliteCache
 from eve_tools.tests.utils import request_from_ESI

@@ -382,22 +382,14 @@ async def _get_type_history_async(rid: int, type_id: int, reduces: Optional[Call
         region_id=rid,
         type_id=type_id,
         raises=None,
+        formats=True,
     )
     if resp is None:
         return None
 
-    resp = resp.data
-    if len(resp) == 0:
+    df = resp.data
+    if len(df) == 0:
         return
-
-    df = pd.DataFrame(resp)
-    df["type_id"] = type_id
-    df["region_id"] = rid
-    # ESI updates history on 11:05:00 GMT, 39900 for 11:05 in timestamp, UTC is the same as GMT
-    df["date"] = df["date"].apply(
-        lambda date: datetime.timestamp(datetime.strptime(f"{date} +0000", "%Y-%m-%d %z")) + 39900
-    )
-    df = df[ESIDB.columns["market_history"]]
 
     df.to_sql(
         "market_history",
@@ -478,23 +470,17 @@ def get_market_history(
         async_loop=["type_id"],
         region_id=rid,
         type_id=type_ids,
+        formats=True,
     )
 
     for i in range(len(resp)):
         respp = resp[i]
-        data = respp.data
-        if data is None or len(data) == 0:
+        df = respp.data
+        if df is None or len(df) == 0:
             resp[i] = None
             continue
-        df = pd.DataFrame(data)
+
         type_id = respp.request_info.params.get("type_id")
-        df["type_id"] = type_id
-        df["region_id"] = rid
-        # ESI updates history on 11:05:00 GMT, 39900 for 11:05 in timestamp, UTC is the same as GMT
-        df["date"] = df["date"].apply(
-            lambda date: datetime.timestamp(datetime.strptime(f"{date} +0000", "%Y-%m-%d %z")) + 39900
-        )
-        df = df[ESIDB.columns["market_history"]]
 
         df.to_sql(
             "market_history",

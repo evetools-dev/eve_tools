@@ -47,35 +47,37 @@ class _CacheRecord:
     miss: int = 0
 
 
-@dataclass
 class InsertBuffer:
     """Buffers cache.set to avoid repetitive insert transaction."""
 
-    db: "ESIDBManager"
-    table: str
-    buffer: List[Tuple] = field(default_factory=list)  # [(key_hash, value, expires), ...]
-    cap: int = 50
+    def __init__(self, db: "ESIDBManager", cap: int = 50) -> None:
+        self.db = db
+    
+        self.buffer: List[Tuple] = []  # [((key_hash, value, expires), table), ...]
+        self.cap = cap
 
     def flush(self) -> None:
         """Flushes buffer payload to database file. Buffer payload is cleared after flushing."""
         self.db.execute("BEGIN")
-        for param in self.buffer:
-            self.db.execute(f"INSERT OR REPLACE INTO {self.table} VALUES(?,?,?)", param)
+        for entry in self.buffer:
+            self.db.execute(f"INSERT OR REPLACE INTO {entry[1]} VALUES(?,?,?)", entry[0])
         self.db.commit()
         self.clear()
         logger.debug("Cache entries flushed")
 
-    def insert(self, entry: Tuple) -> None:
+    def insert(self, entry: Tuple, table: str) -> None:
         """Inserts db entry to buffer. Flushes if ``cap`` is reached.
 
         Args:
             entry: (key, value, expires)
                 A database entry.
+            table: str
+                Insert entry to this table.
         """
         if len(self.buffer) >= self.cap:
             self.flush()
 
-        self.buffer.append(entry)
+        self.buffer.append((entry, table))
 
     def select(self, key_hash) -> Tuple:
         """Selects value from buffer. Similar to cache.get.
@@ -85,8 +87,8 @@ class InsertBuffer:
                 A hashed key, which is retrieved from hash_key() function.
         """
         for b in self.buffer:
-            if b[0] == key_hash:
-                return b
+            if b[0][0] == key_hash:
+                return b[0]
         return None
 
     def clear(self) -> None:
@@ -97,7 +99,7 @@ class InsertBuffer:
     def __contains__(self, key):
         _h = hash_key(key)
         for b in self.buffer:
-            if b[0] == _h:
+            if b[0][0] == _h:
                 return True
         return False
 
