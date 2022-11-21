@@ -35,3 +35,12 @@ class ESIResponseError(Exception):
             self.message,
             self.request_info.real_url,
         )
+
+class EndpointDownError(Exception):
+    """Endpoint is not alive (red flag)."""
+
+    def __init__(self, endpoint_key: str) -> None:
+        self.key = endpoint_key
+
+    def __str__(self) -> str:
+        return f"Endpoint {self.key} is down"

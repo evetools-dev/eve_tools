@@ -1,12 +1,16 @@
 import aiohttp
+import json
 import os
 import pandas as pd
+import requests
+from time import time
+from typing import Dict
 
 from .metadata import ESIRequest
 from .utils import cache_check_request
-from eve_tools.config import SDE_DIR
+from eve_tools.config import SDE_DIR, ESI_DIR
 from eve_tools.data import SqliteCache, CacheDB
-from eve_tools.exceptions import InvalidRequestError
+from eve_tools.exceptions import InvalidRequestError, EndpointDownError
 from eve_tools.log import getLogger
 
 
@@ -48,6 +52,7 @@ class ESIRequestChecker(metaclass=_NonOverridable):
         self.enabled = True
         self.raise_flag = False
         self.requests = 0  # just for fun
+        self.endpoints_checker = ESIEndpointChecker()
 
         if cache is Ellipsis:
             self.cache = SqliteCache(CacheDB, "checker_cache")
@@ -60,7 +65,7 @@ class ESIRequestChecker(metaclass=_NonOverridable):
     async def __call__(self, api_request: ESIRequest, raise_flag: bool = False) -> bool:
         if not self.enabled:
             return True
-            
+
         self.raise_flag = raise_flag
         return await self.__check_request(api_request)
 
@@ -73,12 +78,20 @@ class ESIRequestChecker(metaclass=_NonOverridable):
 
         Raises:
             InvalidRequestError: raised when request is blocked and ESI.request family sets keyword ``raises = True``.
+            EndpointDownError: raised when requested endpoint is down.
 
         Note:
-            This method is not cached, but individual checks are cached for one month.
+            This method is not cached, but individual checks might be cached for one month.
         """
         valid = True
         error = None
+
+        # Check endpoint status
+        if valid and self.endpoints_checker.enabled:
+            valid = self.endpoints_checker(api_request.request_key)
+            if not valid:
+                error = EndpointDownError(api_request.request_key)
+
         # Check type_id in query
         if valid and "type_id" in api_request.kwd:
             type_id = api_request.kwd.get("type_id")
@@ -147,3 +160,47 @@ class ESIRequestChecker(metaclass=_NonOverridable):
             api_request.request_key,
             api_request.kwd,
         )
+
+
+class ESIEndpointChecker:
+    """Checks status of ESI endpoints.
+
+    Note:
+        This method does not follow the ``expires`` field in response header.
+        This method retrieves ``status.json`` from ESI every 60 seconds (as ``expires`` headers specified).
+    """
+
+    def __init__(self) -> None:
+        self.enabled = True
+        self.target_url = "https://esi.evetech.net/status.json?version=latest"
+        self.fd_path = os.path.join(ESI_DIR, "status.json")
+
+        if not os.path.exists(self.fd_path) or os.stat(self.fd_path).st_size == 0:
+            self.fd = open(self.fd_path, "w")
+            self.status_parsed = None
+        else:
+            self.fd = open(self.fd_path, "r")
+            self.status_parsed = json.load(self.fd)
+
+    @property
+    def fd_expired(self) -> bool:
+        return (self.status_parsed is None or len(self.status_parsed) == 0) or (
+            os.path.exists(self.fd_path) and os.path.getmtime(self.fd_path) - time() > 60
+        )
+
+    def __call__(self, endpoint: str) -> bool:
+
+        # If no local status.json, or local version expired, retrieve from ESI
+        if self.fd_expired:
+            resp = requests.get(self.target_url)
+            status = resp.json()
+            self.status_parsed = self._parse_status_json(status)
+            json.dump(self.status_parsed, self.fd)
+            self.fd.flush()
+
+        # Now, self.status_parsed has a fresh **parsed** copy of ``status.json``
+        return self.status_parsed.get(endpoint, False)
+
+    @staticmethod
+    def _parse_status_json(status) -> Dict:
+        return {entry["route"]: True if entry["status"] == "green" else False for entry in status}
