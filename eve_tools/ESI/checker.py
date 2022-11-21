@@ -182,6 +182,9 @@ class ESIEndpointChecker:
             self.fd = open(self.fd_path, "r")
             self.status_parsed = json.load(self.fd)
 
+    def __del__(self):
+        self.fd.close()
+
     @property
     def fd_expired(self) -> bool:
         return (self.status_parsed is None or len(self.status_parsed) == 0) or (

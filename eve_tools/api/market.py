@@ -2,12 +2,13 @@ import asyncio
 import pandas as pd
 import time
 from typing import Callable, List, Union, Optional
-from datetime import datetime
 
 from eve_tools.ESI import ESIClient
+from eve_tools.ESI.checker import ESIEndpointChecker
 from eve_tools.api import search_structure_id, search_id, search_station_region_id
 from eve_tools.api.search import search_system_region_id
 from eve_tools.data import ESIDB
+from eve_tools.exceptions import EndpointDownError
 from .utils import _update_or_not, _select_from_orders, cache
 
 
@@ -358,6 +359,10 @@ async def _get_type_history_async(rid: int, type_id: int, reduces: Optional[Call
         4. Jita has 15000+ type_ids -> ~900MB json.
         5. Each type_id needs one request, so 1000+ requests for Null sec and 15000+ requests for Jita.
     """
+    checker = ESIEndpointChecker()
+    if not checker("/markets/{region_id}/history/"):
+        raise EndpointDownError("/markets/{region_id}/history/")
+    
     update_flag, _ = _update_or_not(
         time.time() - 2 * 24 * 3600,
         "market_history",
@@ -455,6 +460,10 @@ def get_market_history(
         reduce_volume(): Reduce a market history DataFrame to volume data.
         _get_type_history_async(): Gets market history of a market type asynchronously.
     """
+    checker = ESIEndpointChecker()
+    if not checker("/markets/{region_id}/history/"):
+        raise EndpointDownError("/markets/{region_id}/history/")
+        
     if isinstance(region_name_or_id, str):
         rid = search_id(region_name_or_id, "region")
     elif isinstance(region_name_or_id, int):

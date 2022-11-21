@@ -339,6 +339,13 @@ class ESI(object):
         if checks:
             valid = await self.__request_checker(api_request, __raise_flag)
             if not valid:  # blocked
+                if self._record_session is True:
+                    # A little hack for _session_recorder.
+                    # Since checker has been moved to ESI.request, which is not covered by recorder,
+                    # this hack is necessary and useful.
+                    # Future commits will provide simpler interface for _session_recorder.
+                    self._record.requests_blocked += 1
+                    self._record.requests += 1
                 if self.__raises is None:
                     # promised to return an ESIResponse
                     return ESIResponse(-1, api_request.request_type, {}, api_request, data=None)

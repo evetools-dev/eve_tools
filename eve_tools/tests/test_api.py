@@ -6,7 +6,7 @@ from eve_tools.api import *
 from eve_tools.api.search import InvType, SolarSystem, Station, Structure
 from eve_tools.api.utils import reduce_volume
 from eve_tools.log import getLogger
-from .utils import TestInit, request_from_ESI, internet_on
+from .utils import TestInit, request_from_ESI, internet_on, endpoint_on
 
 logger = getLogger("test_api")
 
@@ -56,6 +56,7 @@ class TestMarket(unittest.TestCase, TestInit):
     # test_get_region_types_db(self)
 
     @unittest.skipUnless(internet_on(), "no internet connection")
+    @unittest.skipUnless(endpoint_on("/markets/{region_id}/history/"), "endpoint down")
     def test_get_type_history_no_reduce(self):
         resp: pd.DataFrame = request_from_ESI(get_type_history, 10000002, 12005)
         resp_cache: pd.DataFrame = get_type_history(10000002, 12005)
@@ -85,6 +86,7 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
     @unittest.skipUnless(internet_on(), "no internet connection")
+    @unittest.skipUnless(endpoint_on("/markets/{region_id}/history/"), "endpoint down")
     def test_get_type_history_with_reduce(self):
         resp: pd.DataFrame = request_from_ESI(get_type_history, 10000002, 12005, reduce_volume)
         resp_cache: pd.DataFrame = get_type_history(10000002, 12005, reduce_volume)
@@ -102,6 +104,8 @@ class TestMarket(unittest.TestCase, TestInit):
         self.assertTrue(resp.equals(resp_cache))
         self.assertEqual(set(resp.columns), set(resp_cache.columns))
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
+    @unittest.skipUnless(endpoint_on("/markets/{region_id}/history/"), "endpoint down")
     def test_get_market_history(self):
         region = "The Bleak Lands"  # with only ~2500 types
 
