@@ -2,12 +2,13 @@ import asyncio
 import pandas as pd
 import time
 from typing import Callable, List, Union, Optional
-from datetime import datetime
 
 from eve_tools.ESI import ESIClient
+from eve_tools.ESI.checker import ESIEndpointChecker
 from eve_tools.api import search_structure_id, search_id, search_station_region_id
 from eve_tools.api.search import search_system_region_id
 from eve_tools.data import ESIDB
+from eve_tools.exceptions import EndpointDownError
 from .utils import _update_or_not, _select_from_orders, cache
 
 
@@ -358,6 +359,10 @@ async def _get_type_history_async(rid: int, type_id: int, reduces: Optional[Call
         4. Jita has 15000+ type_ids -> ~900MB json.
         5. Each type_id needs one request, so 1000+ requests for Null sec and 15000+ requests for Jita.
     """
+    checker = ESIEndpointChecker()
+    if not checker("/markets/{region_id}/history/"):
+        raise EndpointDownError("/markets/{region_id}/history/")
+    
     update_flag, _ = _update_or_not(
         time.time() - 2 * 24 * 3600,
         "market_history",
@@ -382,22 +387,14 @@ async def _get_type_history_async(rid: int, type_id: int, reduces: Optional[Call
         region_id=rid,
         type_id=type_id,
         raises=None,
+        formats=True,
     )
     if resp is None:
         return None
 
-    resp = resp.data
-    if len(resp) == 0:
+    df = resp.data
+    if len(df) == 0:
         return
-
-    df = pd.DataFrame(resp)
-    df["type_id"] = type_id
-    df["region_id"] = rid
-    # ESI updates history on 11:05:00 GMT, 39900 for 11:05 in timestamp, UTC is the same as GMT
-    df["date"] = df["date"].apply(
-        lambda date: datetime.timestamp(datetime.strptime(f"{date} +0000", "%Y-%m-%d %z")) + 39900
-    )
-    df = df[ESIDB.columns["market_history"]]
 
     df.to_sql(
         "market_history",
@@ -463,6 +460,10 @@ def get_market_history(
         reduce_volume(): Reduce a market history DataFrame to volume data.
         _get_type_history_async(): Gets market history of a market type asynchronously.
     """
+    checker = ESIEndpointChecker()
+    if not checker("/markets/{region_id}/history/"):
+        raise EndpointDownError("/markets/{region_id}/history/")
+        
     if isinstance(region_name_or_id, str):
         rid = search_id(region_name_or_id, "region")
     elif isinstance(region_name_or_id, int):
@@ -478,23 +479,17 @@ def get_market_history(
         async_loop=["type_id"],
         region_id=rid,
         type_id=type_ids,
+        formats=True,
     )
 
     for i in range(len(resp)):
         respp = resp[i]
-        data = respp.data
-        if data is None or len(data) == 0:
+        df = respp.data
+        if df is None or len(df) == 0:
             resp[i] = None
             continue
-        df = pd.DataFrame(data)
+
         type_id = respp.request_info.params.get("type_id")
-        df["type_id"] = type_id
-        df["region_id"] = rid
-        # ESI updates history on 11:05:00 GMT, 39900 for 11:05 in timestamp, UTC is the same as GMT
-        df["date"] = df["date"].apply(
-            lambda date: datetime.timestamp(datetime.strptime(f"{date} +0000", "%Y-%m-%d %z")) + 39900
-        )
-        df = df[ESIDB.columns["market_history"]]
 
         df.to_sql(
             "market_history",

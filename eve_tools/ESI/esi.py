@@ -1,85 +1,25 @@
 import asyncio
 import aiohttp
-from dataclasses import dataclass
 from tqdm.asyncio import tqdm_asyncio
-from typing import Iterable, Optional, Union, List, Tuple
+from typing import Iterable, Optional, Union, List
 
 from .checker import ESIRequestChecker
+from .handler import ESIDBHandler
+from .formatter import ESIFormatter
 from .parser import ESIRequestParser
-from .token import ESITokens, Token
-from .metadata import ESIMetadata, ESIRequest
+from .token import ESITokens
+from .metadata import ESIRequest
 from .application import ESIApplications, Application
+from .response import ESIResponse
 from .utils import (
     ESIRequestError,
     _SessionRecord,
     _session_recorder,
 )
 from eve_tools.log import getLogger
-from eve_tools.exceptions import ESIResponseError
 
 
 logger = getLogger(__name__)
-
-
-@dataclass
-class ESIResponse:
-    """Response returned by ESI.request() family.
-
-    User should never create ESIResponse but gets it from ESI.request() calls.
-
-    Attributes: (referencing aiohttp doc)
-        status: int
-            HTTP status code of response.
-        method: str
-            Request's method.
-        headers: dict
-            A case insensitive dictionary with HTTP headers of response.
-        request_info: ESIRequest
-            A copy for request info with url, params, headers used in request.
-        data: dict | List | int
-            A json serialized response body, a dictionary or a list or an int.
-        expires: str | None
-            A RFC7231 formatted datetime string, if any.
-        reason: str | None
-            Reason-Phrase from aiohttp.ClientResponse.
-        error_remain: int
-            Errors the user can make in the time window.
-        error_reset: int
-            Time window left, in seconds. After this many seconds, error_remain will be refreshed to 100.
-
-    Note:
-        ESI class uses status=-1 to mark an error internally. (well this is abnormal but a useful shortcut...)
-    """
-
-    status: int
-    method: str
-    headers: dict
-    request_info: ESIRequest
-    data: Optional[Union[dict, List, int]]
-    expires: Optional[str] = None
-    reason: Optional[str] = None
-    error_remain: Optional[int] = 100
-    error_reset: Optional[int] = 60
-
-    def __len__(self):
-        return len(self.data)
-
-    def __repr__(self) -> str:
-        return f"<Response [{self.status}]>"
-
-    def raise_for_status(self):
-        # Please note that this raise_for_status() is only intended for printing out useful exception message.
-        # This method does not recreate aiohttp.ClientResponse's raise_for_status().
-        if self.status >= 400:
-            raise ESIResponseError(self.status, self.request_info, self.reason)
-
-    @property
-    def ok(self) -> bool:
-        """Returns ``True`` if ``status`` is ``200`` or ``304``, ``False`` if not.
-
-        This is **not** a check for ``200 OK``.
-        """
-        return self.status == 200 or self.status == 304
 
 
 class ESI(object):
@@ -110,17 +50,22 @@ class ESI(object):
         self.__async_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
         self.__event_loop = asyncio.get_event_loop()
 
+        ### Formatter
+        self.__formatter = ESIFormatter()
+
         ### Session record
         self._record_session = True  # default recording
         self._record: _SessionRecord = _SessionRecord()
 
         ### Request checker
         self.__request_checker = ESIRequestChecker()
-        self.__singular_req = False  # Single/multiple async request(s)
         self.__raises = None  # user defined raise flag
 
         ### Request parser
         self.__parser = ESIRequestParser(self.apps)
+
+        ### Request DB handler
+        self.__db = ESIDBHandler()
 
         logger.info("ESI instance initiated")
 
@@ -154,6 +99,13 @@ class ESI(object):
     def checker(self) -> ESIRequestChecker:
         return self.__request_checker
 
+    def setFormatter(self, fmt: ESIFormatter):
+        self._formatter = fmt
+
+    @property
+    def formatter(self):
+        return self.__formatter
+
     @property
     def parser(self) -> ESIRequestParser:
         return self.__parser
@@ -164,7 +116,7 @@ class ESI(object):
         key: str,
         async_loop: Optional[List] = None,
         **kwd,
-    ) -> Union[dict, List[dict], None]:
+    ) -> Union[ESIResponse, List[ESIResponse], None]:
         """Requests GET an ESI API.
 
         Simplifies coroutine execution and send asynchronous GET request to ESI server.
@@ -203,7 +155,12 @@ class ESI(object):
             kwd.cname: str
                 A string of character name. Token with cname would be used for the request.
             kwd.checks: bool
-                Whether to use _RequestChecker to block incorrect requests, default True.
+                Whether to use ``ESIRequestChecker`` to block incorrect requests, default ``True``.
+            kwd.formats: bool
+                Whether to use ``ESIFormatter`` to format ``ESIResponse``, default ``False``.
+            kwd.stores: bool
+                Whether to use ``ESIDBHandler`` to store ``ESIResponse`` to database, default ``False``.
+                If set to ``True``, ``formats`` keyword automatically sets to True.
 
         Returns:
             An ESIResponse instance or a list of ESIResponse instances, depends on async_loop argument.
@@ -230,9 +187,7 @@ class ESI(object):
 
         if not async_loop:
             logger.info("REQUEST GET - %s w/k %s", key, str(kwd))
-            self.__singular_req = True
             ret = self.__event_loop.run_until_complete(self.request("get", key, raises=raises, **kwd))
-            self.__singular_req = False  # back to default
             return ret
 
         if async_loop is not None and not isinstance(async_loop, Iterable):
@@ -273,13 +228,7 @@ class ESI(object):
 
         recursive_looper(list(async_loop), kwd)
 
-        logger.info(
-            "REQUEST GET - %s on %s: %d tasks w/k %s",
-            key,
-            str(async_loop),
-            len(tasks),
-            str(kwd),
-        )
+        logger.info(f"REQUEST GET - {key} on {str(async_loop)}: {len(tasks)} tasks w/ keyword {str(kwd)}")
 
         # self.__event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
         self.__event_loop.run_until_complete(tqdm_asyncio.gather(*tasks))
@@ -293,7 +242,7 @@ class ESI(object):
         return ret
 
     @_session_recorder(fields="timer")
-    def head(self, key: str, **kwd) -> dict:
+    def head(self, key: str, **kwd) -> ESIResponse:
         """Request HEAD an ESI API.
 
         Checks input parameters and send a synchronous HEAD request to ESI server.
@@ -332,13 +281,11 @@ class ESI(object):
         >>> x_pages = int(headers["X-Pages"])   # X-Pages tells total # of pages for "page" parameter
         """
         raises = kwd.pop("raises", True)
-        self.__singular_req = True
         logger.info("REQUEST HEAD - %s w/k %s", key, str(kwd))
         ret = self.__event_loop.run_until_complete(self.request("head", key, raises=raises, **kwd))
-        self.__singular_req = False
         return ret
 
-    async def request(self, method: str, key: str, **kwd) -> Union[dict, None]:
+    async def request(self, method: str, key: str, **kwd) -> Union[ESIResponse, None]:
         """Sends one request to an ESI API.
 
         Checks input parameters and send one asynchronous request to ESI server.
@@ -359,8 +306,13 @@ class ESI(object):
                 * False: promise never raises, return None on error. Use with caution.
                 * None: same as True when response headers "x-esi-error-limit-remain" <= 5. Otherwise, not raise on status error (status > 400), raise on some other errors (TimeoutError, ServerDisconnectedError). Promise return an ESIResponse (or list of ESIResponse) when no error.
             kwd.checks: bool
-                Whether to use _RequestChecker to block incorrect requests, default True.
-            kwd: Keywords necessary for sending the request, such as headers, params, and other ESI required inputs.
+                Whether to use ``ESIRequestChecker`` to block incorrect requests, default ``True``.
+            kwd.formats: bool
+                Whether to use ``ESIFormatter`` to format ``ESIResponse``, default ``False``.
+            kwd.stores: bool
+                Whether to use ``ESIDBHandler`` to store ``ESIResponse`` to database, default ``False``.
+                If set to ``True``, ``formats`` keyword automatically sets to True.
+            kwd: Keywords necessary for sending the request, such as ``headers``, ``params``, and other ESI required inputs.
 
         Returns:
             An instance of ESIResponse containing response of the request.
@@ -374,9 +326,31 @@ class ESI(object):
         """
 
         self.__raises = kwd.pop("raises", None)
-        checks = kwd.pop("checks", True)
+        checks = self.__request_checker.enabled and kwd.pop("checks", True)
+        stores = self.__db.enabled and kwd.pop("stores", False)
+        formats = self.__formatter.enabled and stores or kwd.pop("formats", False)
 
+        # Parser: parse user input
         api_request = await self.__parser(key, method, **kwd)
+
+        # Checker: (predict) if api_request sent will cause ESI error.
+        # This reduces 400, 404, and 403 errors.
+        __raise_flag = self.__raises
+        if checks:
+            valid = await self.__request_checker(api_request, __raise_flag)
+            if not valid:  # blocked
+                if self._record_session is True:
+                    # A little hack for _session_recorder.
+                    # Since checker has been moved to ESI.request, which is not covered by recorder,
+                    # this hack is necessary and useful.
+                    # Future commits will provide simpler interface for _session_recorder.
+                    self._record.requests_blocked += 1
+                    self._record.requests += 1
+                if self.__raises is None:
+                    # promised to return an ESIResponse
+                    return ESIResponse(-1, api_request.request_type, {}, api_request, data=None)
+                else:
+                    return None
 
         # Using asyncio.run() is problematic because it creates a new event loop (or maybe other advanced/mysterious reasons?).
         # For my application (web request), aiohttp kind of like non-blocking accept in C,
@@ -387,15 +361,22 @@ class ESI(object):
             api_request, method, checks=checks
         )
 
+        # Parser: etag cache
         if res is not None:
             etag = res.headers.get("Etag")
-            if res.status == 304:
-                # Uses etag cache
+            if res.status == 304:  # Uses etag cache
                 res.data = self.__parser._get_etag_payload(api_request.rid)
             elif res.status == 200:
                 self.__parser._set_etag(api_request.rid, etag, res.data)
 
         self.__raises = None  # back to default
+
+        # Formatter: format response
+        if formats:
+            res = self.__formatter(key, res)
+
+        if stores:
+            res = self.__db(key, res)
         return res
 
     @_session_recorder(exclude="timer")
@@ -420,24 +401,6 @@ class ESI(object):
             An instance of ESIResponse containing response of the request. Memory allocation assumed not to be a problem.
             Or None, if an error occurs and ESI.request family sets keyword ``raises = False``.
         """
-        # Check (predict) if api_request sent will cause ESI error.
-        # This reduces 400, 404, and 403 errors.
-        __raise_flag = self.__raises
-        blocked = checks and not await self.__request_checker(api_request, __raise_flag)
-        if blocked:
-            if self.__raises is False:
-                return None
-            if self.__raises is None:
-                # promised to return an ESIResponse
-                return ESIResponse(
-                    status=-1,
-                    method=method,
-                    headers={},
-                    request_info=api_request,
-                    data=None,
-                )
-            # if self.__raises is True, should have been raised in RequestChecker
-
         # no encoding: "4-HWF" stays what it is
         if method == "get":
             async with self.__async_session.get(
@@ -445,8 +408,17 @@ class ESI(object):
             ) as resp:
                 api_request.url = str(resp.url)  # URL class implements str
                 data = None
-                if resp.status != 304:
+                if resp.status == 200:
                     data = await resp.json()
+                elif resp.status != 304:
+                    logger.warning(
+                        "Response status %d: key = %s, kwd = %s",
+                        resp.status,
+                        api_request.request_key,
+                        str(api_request.kwd),
+                    )
+                # If resp not OK, some headers fields might be empty.
+                # Default values for these fields might be dangerous as they might be unexpected.
                 ret = ESIResponse(
                     status=resp.status,
                     method=resp.method,
@@ -455,8 +427,8 @@ class ESI(object):
                     data=data,
                     expires=resp.headers.get("Expires"),
                     reason=resp.reason,
-                    error_remain=int(resp.headers.get("x-esi-error-limit-remain")),
-                    error_reset=int(resp.headers.get("x-esi-error-limit-reset")),
+                    error_remain=int(resp.headers.get("x-esi-error-limit-remain", 100)),
+                    error_reset=int(resp.headers.get("x-esi-error-limit-reset", 60)),
                 )
 
         elif method == "head":
