@@ -1,40 +1,57 @@
 import unittest
+import requests
 from datetime import datetime
+from yarl import URL
 
-from eve_tools.ESI import ESIClient, ESIRequestChecker
-from eve_tools.ESI.utils import _SessionRecord, ESIRequestError
-from eve_tools.ESI.esi import ESIResponse
+from eve_tools.ESI import ESIClient
+from eve_tools.ESI.checker import ESIRequestChecker, ESIEndpointChecker
+from eve_tools.ESI.formatter import ESIFormatter
+from eve_tools.ESI.metadata import ESIRequest
+from eve_tools.ESI.parser import ESIRequestParser, ETagEntry
+from eve_tools.ESI.utils import _SessionRecord
+from eve_tools.ESI.response import ESIResponse
 from eve_tools.ESI.sso.utils import to_clipboard, read_clipboard
 from eve_tools.exceptions import InvalidRequestError, ESIResponseError
-from eve_tools.data import CacheDB, SqliteCache
+from eve_tools.data import SqliteCache
 from eve_tools.tests.utils import request_from_ESI
 from eve_tools.log import getLogger
-from .utils import internet_on, TestInit
+from .utils import internet_on, endpoint_on, TestInit
 
 logger = getLogger("test_esi")
 
 
-class TestESI(unittest.TestCase):
-    def setUp(self) -> None:
-        logger.debug("TEST running: %s", self.id())
+class TestFormatter(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.formatter = ESIFormatter()
 
-    @unittest.skipUnless(internet_on(), "no internet connection")
-    def test_api_session_recorder(self):
-        """Tests ESI._start_api_session, ESI._end_api_session, ESI._clear_api_record, ESI._api_session_record"""
-        # Test: clear session
-        ESIClient._record = _SessionRecord(requests=123, timer=12.3, expires="future")
+    def test_format_key(self):
+        key_formatter = self.formatter._ESIFormatter__format_key
+        key = "/characters/{character_id}/mail/"
+        res = key_formatter(key)
+        self.assertIsInstance(res, str)
+        self.assertEqual(res, "characters_character_id_mail")
+
+
+class TestSessionRecorder(unittest.TestCase):
+    def setUp(self) -> None:
         ESIClient._clear_record()
+
+    def test_clear_session(self):
+        ESIClient._record = _SessionRecord(requests=123, timer=12.3, expires="future")
         self.assertIsInstance(ESIClient._record, _SessionRecord)
         self.assertFalse(ESIClient._record)  # empty
         self.assertTrue(ESIClient._record_session)  # does not stop record
 
+        # _clear_record with specific field
         ESIClient._record = _SessionRecord(requests=123, timer=12.3, expires="future")
         ESIClient._clear_record(field="expires")
         self.assertIsNone(ESIClient._record.expires)
         self.assertEqual(ESIClient._record.requests, 123)
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
+    def test_start_stop_recording(self):
         # Test: start & stop recording
-        ESIClient._clear_record()
         ESIClient.head("/universe/systems/")
         self.assertTrue(ESIClient._record)  # not empty
         record = _SessionRecord(
@@ -59,26 +76,19 @@ class TestESI(unittest.TestCase):
         ESIClient.head("/universe/systems/")
         self.assertEqual(ESIClient._record.requests, record.requests + 1)
 
+    @unittest.skipUnless(internet_on(), "no internet connection")
+    @unittest.skipUnless(endpoint_on("/markets/{region_id}/orders/"), "endpoint down")
+    @unittest.skipUnless(endpoint_on("/alliances/"), "endpoint down")
+    def test_api_session_recorder(self):
         # Test: records correctly
-        ESIClient._clear_record()
         ESIClient._start_record()
         expire_1 = ESIClient.head(
             "/markets/{region_id}/orders/", region_id=10000002, order_type="all"
         ).expires
-        expire_2 = ESIClient.head(
-            "/markets/{region_id}/history/", region_id=10000002, type_id=12005
-        ).expires
+        expire_2 = ESIClient.head("/alliances/").expires
         dt_format = "%a, %d %b %Y %H:%M:%S %Z"
-        expected_expires = (
-            datetime.strftime(
-                min(
-                    datetime.strptime(expire_1, dt_format),
-                    datetime.strptime(expire_2, dt_format),
-                ),
-                dt_format,
-            )
-            + "GMT"
-        )
+        expired_t = min(datetime.strptime(expire_1, dt_format), datetime.strptime(expire_2, dt_format))
+        expected_expires = datetime.strftime(expired_t, dt_format) + "GMT"
         self.assertEqual(expected_expires, ESIClient._record.expires)
         self.assertEqual(ESIClient._record.requests, 2)
         self.assertGreater(ESIClient._record.timer, 0.0001)
@@ -108,15 +118,22 @@ class TestESI(unittest.TestCase):
         self.assertEqual(ESIClient._record.requests_failed, 0)
         self.assertEqual(ESIClient._record.requests_succeed, 2)
 
+
+class TestESI(unittest.TestCase):
+    def setUp(self) -> None:
+        logger.debug("TEST running: %s", self.id())
+
     @unittest.skipUnless(internet_on(), "no internet connection")
+    @unittest.skipUnless(endpoint_on("/markets/{region_id}/orders/"), "endpoint down")
+    @unittest.skipUnless(endpoint_on("/universe/types/{type_id}/"), "endpoint down")
     def test_request_raises(self):
         """Test ESI.request(..., raises=True/False/None)."""
         # Make a correct request first
-        resp = ESIClient.get("/markets/{region_id}/history/", region_id=10000002, type_id=12005)
+        resp = ESIClient.get("/markets/{region_id}/orders/", region_id=10000002, type_id=12005)
         self.assertIsInstance(resp, ESIResponse)
-        self.assertEqual(resp.status, 200)
+        self.assertTrue(resp.ok)
 
-        resp = ESIClient.head("/markets/{region_id}/history/", region_id=10000002, type_id=12005)
+        resp = ESIClient.head("/markets/{region_id}/orders/", region_id=10000002, type_id=12005)
         self.assertIsInstance(resp, ESIResponse)
 
         # Test: raises = True
@@ -187,6 +204,22 @@ class TestESI(unittest.TestCase):
         self.assertEqual(len(resp), 3)
 
 
+class TestEndpointChecker(unittest.TestCase):
+    def setUp(self) -> None:
+        self.checker = ESIEndpointChecker()
+
+    @unittest.skipUnless(internet_on(), "no internet connection")
+    @unittest.skipUnless(endpoint_on("/characters/{character_id}/standings/"), "endpoint down")
+    def test_checker(self):
+        resp = requests.get(self.checker.target_url)
+        status = resp.json()
+        status_parsed = self.checker._parse_status_json(status)
+        self.assertIn("/characters/{character_id}/standings/", status_parsed)
+
+        self.assertTrue(self.checker("/characters/{character_id}/standings/"))
+        self.assertTrue(self.checker("/characters/{character_id}/standings/"))  # assert again
+
+
 class TestRequestChecker(unittest.TestCase, TestInit):
     @classmethod
     def setUpClass(cls) -> None:
@@ -194,6 +227,7 @@ class TestRequestChecker(unittest.TestCase, TestInit):
         cls.checker = ESIRequestChecker(cls.checker_cache)
 
     @unittest.skipUnless(internet_on(), "no internet connection")
+    @unittest.skipUnless(endpoint_on("/markets/{region_id}/orders/"), "endpoint down")
     def test_check_type_id(self):
         """Tests ESIRequestChecker.check_type_id()."""
         type_id = 12005
@@ -265,17 +299,17 @@ class TestRequestChecker(unittest.TestCase, TestInit):
         self.assertEqual(hits + 1, self.checker_cache.hits)
         self.assertEqual(miss, self.checker_cache.miss)
 
-        ESIClient.head("/markets/{region_id}/history/", region_id=10000002, type_id=12007, raises=False)
+        ESIClient.head("/markets/{region_id}/orders/", region_id=10000002, type_id=12007, raises=False)
         self.assertEqual(miss, self.checker_cache.miss)
         self.assertEqual(hits + 2, self.checker_cache.hits)  # should be a hit
 
-        ESIClient.head("/markets/{region_id}/history/", region_id=10000003, type_id=12007, raises=False)
+        ESIClient.head("/markets/{region_id}/orders/", region_id=10000003, type_id=12007, raises=False)
         self.assertEqual(miss, self.checker_cache.miss)
         self.assertEqual(hits + 3, self.checker_cache.hits)  # should be a hit
 
         hits, miss = self.checker_cache.hits, self.checker_cache.miss
         ESIClient.get(
-            "/markets/{region_id}/history/",
+            "/markets/{region_id}/orders/",
             region_id=10000002,
             async_loop=["type_id"],
             type_id=[12005, 12006, 12007],
@@ -285,7 +319,7 @@ class TestRequestChecker(unittest.TestCase, TestInit):
 
         hits, miss = self.checker_cache.hits, self.checker_cache.miss
         ESIClient.get(
-            "/markets/{region_id}/history/",
+            "/markets/{region_id}/orders/",
             region_id=10000003,  # new region
             async_loop=["type_id"],
             type_id=[12006, 12007, 12005, 1405],
@@ -295,7 +329,7 @@ class TestRequestChecker(unittest.TestCase, TestInit):
 
         hits, miss = self.checker_cache.hits, self.checker_cache.miss
         ESIClient.get(
-            "/markets/{region_id}/history/",
+            "/markets/{region_id}/orders/",
             region_id=10000003,  # new region
             async_loop=["type_id"],
             type_id=[1405, 12007, 12006, 12005],
@@ -307,7 +341,7 @@ class TestRequestChecker(unittest.TestCase, TestInit):
         ESIClient.setChecker(checker)
         hits, miss = self.checker_cache.hits, self.checker_cache.miss
         ESIClient.get(
-            "/markets/{region_id}/history/",
+            "/markets/{region_id}/orders/",
             region_id=10000003,  # new region
             async_loop=["type_id"],
             type_id=[1405, 12007, 12006, 12005],
@@ -320,6 +354,54 @@ class TestRequestChecker(unittest.TestCase, TestInit):
     def tearDown(self) -> None:
         self.TESTDB.clear_db()
         self.checker_cache.buffer.clear()
+
+
+class TestParser(unittest.TestCase, TestInit):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.etag_cache = SqliteCache(cls.TESTDB, "etag_cache")
+        cls.parser = ESIRequestParser(ESIClient.apps, cls.etag_cache)
+
+    def test_etag(self):
+        req = ESIRequest("test key", "get", kwd={"cid": 123, "sid": 234})
+        etag = "test_etag-123456"
+        payload = 12005
+
+        # Test: set_etag
+        self.parser._set_etag(req.rid, etag, payload)
+
+        entry: ETagEntry = self.etag_cache.get(req.rid)
+        self.assertIsNotNone(entry)
+        self.assertIsInstance(entry, ETagEntry)
+        self.assertEqual(entry.etag, etag)
+        self.assertEqual(entry.payload, payload)
+
+        # Test: get_etag
+        self.assertEqual(self.parser._get_etag(req.rid), etag)
+
+        ret = self.parser._get_etag("some nonexisting rid")
+        self.assertEqual(ret, "")  # "ETag" : "" is allowed in http
+
+        # Test: get_etag_payload
+        self.assertEqual(self.parser._get_etag_payload(req.rid), payload)
+
+        ret = self.parser._get_etag_payload("some nonexisting rid")
+        self.assertIsNone(ret)  # payload should be None if non-existing
+
+    def tearDown(self) -> None:
+        self.TESTDB.clear_table("etag_cache")
+        self.etag_cache.buffer.clear()
+
+
+class TestMetadata(unittest.TestCase):
+    def test_request_info(self):
+        """Test ESIRequest()."""
+        req = ESIRequest("test key", "get", kwd={"cid": 123, "sid": 234})
+        req2 = ESIRequest("test key", "get", kwd={"sid": 234, "cid": 123})
+        self.assertEqual(req.rid, req2.rid)
+
+        url = req.real_url
+        self.assertEqual(url, URL())  # empty url
 
 
 class TestSSO(unittest.TestCase):

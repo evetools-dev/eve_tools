@@ -70,7 +70,7 @@ class SqliteCache(BaseCache):
     def __init__(self, esidb: ESIDBManager, table: str):
         self.c = esidb
         self.table = table
-        self.buffer = InsertBuffer(self.c, self.table)
+        self.buffer = InsertBuffer(self.c)
         atexit.register(self.buffer.flush)
         self.deleter = _DeleteHandler(self.c, self.table)
         atexit.register(self.deleter.save)
@@ -104,7 +104,7 @@ class SqliteCache(BaseCache):
 
         _h = hash_key(key)
         entry = (_h, pickle.dumps(value), expires)
-        self.buffer.insert(entry)
+        self.buffer.insert(entry, self.table)
         self.deleter.update(expires)
         logger.debug("Cache entry set: %s", _h)
 
@@ -122,7 +122,7 @@ class SqliteCache(BaseCache):
         row = self.c.execute(f"SELECT * FROM {self.table} WHERE key=?", (_h,)).fetchone()
         # should use fetchall and check
         if not row:
-            row = self.buffer.select(_h)
+            row = self.buffer.select(_h)  # hash should be unique, so no need table param
         if not row:
             logger.debug("Cache MISS: %s", _h)
             self.miss += 1

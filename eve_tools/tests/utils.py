@@ -7,6 +7,7 @@ from typing import Callable, Coroutine, Union, Optional
 
 from eve_tools import api_cache
 from eve_tools.data import ESIDBManager, make_cache_key
+from eve_tools.ESI.checker import ESIEndpointChecker
 from eve_tools.log import getLogger
 
 logger = getLogger(__name__)
@@ -173,3 +174,8 @@ def internet_on() -> bool:
     except socket.error as ex:
         logger.warning(ex)  # tests should run regardless of connectivity
         return False
+
+def endpoint_on(endpoint: str) -> bool:
+    """Endpoint is alive or not."""
+    checker = ESIEndpointChecker()
+    return checker(endpoint)

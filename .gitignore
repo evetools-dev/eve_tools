@@ -9,6 +9,7 @@ config.yml
 *-journal
 *.*.lock
 *.tmp
+profile
 
 # Distribution files # 
 dist

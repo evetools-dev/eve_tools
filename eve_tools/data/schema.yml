@@ -33,7 +33,7 @@ esi:
       PRIMARY KEY(type_id, region_id, date)
 
 cache:
-  tables: [api_cache, checker_cache]
+  tables: [api_cache, checker_cache, etag_cache]
   api_cache:
     schema:
       key TEXT PRIMARY KEY,
@@ -41,6 +41,13 @@ cache:
       expires TIMESTAMP NOT NULL
   checker_cache:
     schema:
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      expires TIMESTAMP NOT NULL
+  etag_cache:
+    schema:
+      # key: request id (rid)
+      # value: ETagEntry (etag, payload)
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       expires TIMESTAMP NOT NULL
