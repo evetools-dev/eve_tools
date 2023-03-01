@@ -4,7 +4,7 @@ from tqdm.asyncio import tqdm_asyncio
 from typing import Iterable, Optional, Union, List
 
 from .checker import ESIRequestChecker
-from .dbHandler import ESIDBHandler
+from .handler import ESIDBHandler
 from .formatter import ESIFormatter
 from .parser import ESIRequestParser
 from .token import ESITokens

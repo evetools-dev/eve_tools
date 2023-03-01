@@ -60,7 +60,7 @@ class InsertBuffer:
         """Flushes buffer payload to database file. Buffer payload is cleared after flushing."""
         self.db.execute("BEGIN")
         for entry in self.buffer:
-            self.db.execute(f"INSERT OR REPLACE INTO {entry[1]} VALUES(?,?,?)", entry[0])
+            self.db.execute(f"INSERT OR REPLACE INTO {entry[1]} VALUES({','.join('?'*len(entry[0]))})", entry[0])
         self.db.commit()
         self.clear()
         logger.debug("Cache entries flushed")
