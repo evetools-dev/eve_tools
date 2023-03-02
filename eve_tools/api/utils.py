@@ -1,5 +1,4 @@
 from functools import wraps
-import logging
 import pandas as pd
 import time
 from typing import Callable, Optional, Tuple
@@ -7,8 +6,6 @@ from typing import Callable, Optional, Tuple
 from eve_tools.data import ESIDB, api_cache, make_cache_key
 from eve_tools.data.db import ESIDBManager
 from eve_tools.ESI import ESIClient
-
-logger = logging.getLogger(__name__)
 
 
 def _update_or_not(
@@ -71,11 +68,11 @@ def _update_or_not(
         [f"{k}={v}" for k, v in kwd.items()]
     )  # region_id=12345, location_id=123 -> "region_id=12345 AND location_id=123"
     if kwd:  # if there's any left in kwd
-        select_max_value: float = ESIDB.cursor.execute(
+        select_max_value: float = ESIDB.execute(
             f"SELECT MAX({max_column}) FROM {table} WHERE {where_clause}"
         ).fetchone()[0]
     else:
-        select_max_value: float = ESIDB.cursor.execute(
+        select_max_value: float = ESIDB.execute(
             f"SELECT MAX({max_column}) FROM {table}"
         ).fetchone()[0]
 
@@ -88,11 +85,11 @@ def _update_or_not(
     # To avoid this, check there are sufficient entries (more than 1 page) in database.
     if fresh_entry_check and select_max_value:
         if kwd:
-            fresh_entry_cnt = ESIDB.cursor.execute(
+            fresh_entry_cnt = ESIDB.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE {max_column}={select_max_value} AND {where_clause}"
             ).fetchone()[0]
         else:
-            fresh_entry_cnt = ESIDB.cursor.execute(
+            fresh_entry_cnt = ESIDB.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE {max_column}={select_max_value}"
             ).fetchone()[0]
         fresh_entry_flag = fresh_entry_cnt < min_fresh_entry
@@ -131,12 +128,12 @@ def _select_from_orders(
     where_clause = " AND ".join([f"{k}={v}" for k, v in kwd.items() if v is not None])
 
     if type_id:
-        rows = ESIDB.cursor.execute(
+        rows = ESIDB.execute(
             f"SELECT * FROM orders WHERE type_id={type_id} AND is_buy_order!={is_buy_order_filter} AND {where_clause} \
                                     ORDER BY type_id, is_buy_order, price"
         )
     else:
-        rows = ESIDB.cursor.execute(
+        rows = ESIDB.execute(
             f"SELECT * FROM orders WHERE is_buy_order!={is_buy_order_filter} AND {where_clause} \
                                     ORDER BY type_id, is_buy_order, price"
         )

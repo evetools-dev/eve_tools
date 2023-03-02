@@ -1,19 +1,29 @@
 What's new in 0.1.3 (? ?, 2022)
 ==================================
 
+This release ...
+
 
 New features
 ------------
-*
-
+* Add test configuration functionality
+* ``tests`` module now skips tests that are incorrectly configured and when without an internet connection
+* Change default logging handler to RotatingFileHandler (or ConcurrentRotatingFileHandler under win32)
+* Add database operation record to keep track of number of calls and time spent
+* Seperate ``RequestChecker`` from ``ESI`` class, making check methods customizable
+* Add ``ESIRequestParser`` class
 
 Performance improvements
 ------------------------
-*
+* Reduce DELETE database call complexity
+* Buffer INSERT database call to reduce number of transactions
+* Buffer inspect.getsource to reduce make_cache_key speed overhead
+* Tracks cache entry ``expires`` and DELETE when time has passed
+* Support ``If-None-Match`` and ``Etag`` HTTP headers
 
 
 Contributors
 ------------
-A total of 0 people contributed patches to this release.
+A total of 1 people contributed patches to this release.
 
-*
+* Hanbo Guo

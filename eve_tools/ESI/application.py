@@ -4,6 +4,9 @@ import json
 from dataclasses import dataclass, asdict
 
 from eve_tools.config import APP_PATH
+from eve_tools.log import getLogger
+
+logger = getLogger(__name__)
 
 
 @dataclass
@@ -72,6 +75,7 @@ class Application:
 
         with open(APP_PATH, "w") as all_apps_fp:
             json.dump(all_apps, all_apps_fp)
+        logger.info("Save Application successful")
 
 
 class ESIApplications(object):
@@ -84,7 +88,7 @@ class ESIApplications(object):
     def __init__(self) -> None:
         self.apps = []
 
-        self._load_apps()
+        self.__load_apps()
 
     def search_scope(self, scope: str) -> Application:
         """Find the first Application with scope.
@@ -103,8 +107,9 @@ class ESIApplications(object):
             if scope in scopes:
                 return app_
 
+        logger.error("FAILED no application with %s", scope)
         raise ValueError(
-            f"No Application with {scope} found. Create one and save using Application class."
+            f"No Application with {scope} found. Create one using ESIClient.add_app_generate_token() method."
         )
 
     def append(self, app: Application) -> None:
@@ -127,8 +132,9 @@ class ESIApplications(object):
         app_list = [asdict(app_) for app_ in self.apps]
         with open(APP_PATH, "w") as all_apps_fp:
             json.dump(app_list, all_apps_fp)
+        logger.info("Save ESIApplications successful")
 
-    def _load_apps(self) -> None:
+    def __load_apps(self) -> None:
         if not os.path.exists(APP_PATH) or not os.stat(APP_PATH).st_size:
             return
 

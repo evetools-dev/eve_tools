@@ -5,3 +5,4 @@ Developer Guide
    :maxdepth: 2
 
    contributing
+   contributing_to_doc

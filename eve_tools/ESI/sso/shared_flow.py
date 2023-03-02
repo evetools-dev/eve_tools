@@ -6,15 +6,16 @@ found here are used by the OAuth 2.0 examples contained in this project.
 
 Source: https://github.com/esi/esi-docs/blob/master/examples/python/sso/shared_flow.py
 """
-import logging
 import requests
 import time
 import urllib
 
 from .validate_jwt import validate_eve_jwt
 from .utils import to_clipboard
+from eve_tools.log import getLogger
 
-logger = logging.getLogger(__name__)
+
+logger = getLogger(__name__)
 
 
 def generate_auth_url(client_id, code_challenge=None, **kwd):
@@ -104,10 +105,10 @@ def handle_sso_token_response(sso_response: requests.Response):
 
         return data
     else:
-        logger.warning("SSO token response error.")
-        logger.warning("Sent request with url: %s", sso_response.request.url)
-        logger.warning("Sent request with body: %s", sso_response.request.body)
-        logger.warning("Sent request with headers: %s", sso_response.request.headers)
-        logger.warning("SSO response code is: %s", sso_response.status_code)
-        logger.warning("SSO response JSON is: %s", sso_response.json())
+        logger.error("SSO token response error.")
+        logger.error("Sent request with url: %s", sso_response.request.url)
+        logger.error("Sent request with body: %s", sso_response.request.body)
+        logger.error("Sent request with headers: %s", sso_response.request.headers)
+        logger.error("SSO response code is: %s", sso_response.status_code)
+        logger.error("SSO response JSON is: %s", sso_response.json())
         sso_response.raise_for_status()

@@ -3,11 +3,17 @@ import requests
 import json
 from typing import Any, List, Optional
 from dataclasses import dataclass, field
+from yarl import URL
 
 from eve_tools.config import METADATA_PATH
+from eve_tools.log import getLogger
 
 from .param import ESIParams, Param
 from .token import Token
+
+logger = getLogger(__name__)
+
+PARAM_DEFAULT = {"order_type": "all"}
 
 
 @dataclass
@@ -55,6 +61,22 @@ class ESIRequest:
     kwd: Optional[dict] = field(default_factory=dict)
 
     token: Optional[Token] = None
+    blocked: Optional[bool] = False
+
+    @property
+    def real_url(self) -> URL:
+        """Similar to aiohttp's request_info.real_url."""
+        # This is very different from aiohttp's request_info.real_url, 
+        # which uses URL class in a more informative way.
+        # This method is only intended for printing exception message correctly.
+        if self.url is None:
+            return URL()
+        return URL(self.url)
+
+    @property
+    def rid(self):
+        """Request id."""
+        return (self.request_key, self.request_type, self.kwd, "request_id")
 
 
 class ESIMetadata(object):
@@ -110,7 +132,7 @@ class ESIMetadata(object):
         return ESIRequest(request_key, request_type, parameters, security)
 
     def __setitem__(self, key: Any, value: Any):
-        raise TypeError("ESIMetadata is not writable")
+        raise NotImplementedError("ESIMetadata is not writable")
 
     def _parse_parameters(self, body: dict) -> ESIParams:
         """Parse parameters of the metadata for a request.
@@ -133,14 +155,17 @@ class ESIMetadata(object):
                     params.append(param_)
                 continue
 
-            # construct Param class
+            # Construct Param class
             # Param.default is only present in meta parameters.
+            # Some params should have default value but absent in meta parameters,
+            # which are further defined in PARAM_DEFAULT dictionary.
             params.append(
                 Param(
-                    param["name"],
-                    param["in"],
-                    param.get("required", False),
-                    param.get("type", ""),
+                    name=param["name"],
+                    _in=param["in"],
+                    required=param.get("required", False),
+                    dtype=param.get("type", ""),
+                    default=PARAM_DEFAULT.get(param["name"]),
                 )
             )
 
@@ -189,6 +214,7 @@ class ESIMetadata(object):
             metadata = r.json()
             with open(METADATA_PATH, "w") as metadata_file:
                 json.dump(metadata, metadata_file)
+                logger.debug("Load metadata from ESI")
         else:
             with open(METADATA_PATH) as metadata_file:
                 metadata = json.load(metadata_file)

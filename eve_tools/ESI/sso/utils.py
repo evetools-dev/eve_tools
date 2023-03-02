@@ -1,9 +1,10 @@
-import logging
 import pyperclip as pc
 import sys
 from subprocess import check_call, CalledProcessError, DEVNULL
 
-logger = logging.getLogger(__name__)
+from eve_tools.log import getLogger
+
+logger = getLogger(__name__)
 
 
 def to_clipboard(msg: str) -> None:
@@ -26,7 +27,7 @@ def to_clipboard(msg: str) -> None:
 
     try:
         pc.copy(msg)
-        logger.debug("Successfully copied to clipboard: %s", msg)
+        logger.debug("Copy msg to clipboard successful: %s", msg)
     except pc.PyperclipException as pc_exc:
         if sys.platform == "linux":  # linux2 prior to Python 3.3
             if not dependency_satisfied:
@@ -75,11 +76,11 @@ def debian_package_install(name: str) -> bool:
             stdout=DEVNULL,
             stderr=DEVNULL,
         )
-        logger.debug("Installed xclip using: %s", cmd)
+        logger.info("Installed xclip using: %s", cmd)
         return True
     except CalledProcessError as grepexc:
-        logger.warning(
-            f"Package install FAILED: {grepexc.cmd}: {grepexc.returncode} - {grepexc.output}"
+        logger.error(
+            f"FAILED Package install: {grepexc.cmd}: {grepexc.returncode} - {grepexc.output}"
         )
         return False
 
