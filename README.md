@@ -19,42 +19,56 @@ EVE Tools is a Python package that simplifies EVE ESI. The goal is to write easi
 pip3 install eve_tools
 ```
 -----
-or
-### 1. Install manually
+or install manually:
 
-#### 1.1 Download everything under this repo
-
-#### 1.2 Run `requirements.txt` file with pip install.
+1. First download everything under this repo.
+2. Run `requirements.txt` file with pip install:
 ```sh
 cd path/to/your/download/eve_tools-master
 
 pip3 install -r requirements.txt
 ```
-
-#### 1.3 Setup
+3. Run setup code:
 ```sh
 python setup.py install
 ```
 -----
-### 2. Try with `example.py`
+### 2. Sample usage
 
-Download `examples.py` by cp/paste it to an empty Python file, run it by:
-* double clicking it (in Windows)
-* or go to a Python IDE to launch it 
-* or use cmd line, cd to its directory, run:
-```sh
-python examples.py
+```python
+from eve_tools import ESIClient
+
+resp = ESIClient.get("/markets/{region_id}/orders/", region_id=10000002, type_id=12005)
+print(resp.status)  # 200
+print(resp.data)
 ```
-You will see the result `hauling.csv` generated in the same directory as `examples.py`.
+
+This code requests data from _/markets/{region_id}/orders/_ endpoint, by specifying a `region_id` (10000002 for Jita) and a `type_id` (12005 for Ishtar).
+It returns a ``ESIResponse`` object, and the payload can be accessed through ``resp.data``.
+
+----
+
+If you want market history of multiple items:
+
+```python
+from eve_tools import ESIClient
+
+resp = ESIClient.get("/markets/{region_id}/orders/", async_loop=["type_id"], region_id=10000002, type_id=[12005, 1405])
+# resp: [ESIResponse, ESIResponse]
+print(len(resp))  # 2
+print(type(resp[0]))  # ESIResponse
+```
+
+You can use ``async_loop`` argument to specify if you want to loop through, for example, `type_id`. You can potentially give a loooong list of type ids to search for. 
 
 ### 3. Run tests
 
-Go to a Python editor, run the following code:
+There are some built-in tests to verify if everything works as expected:
 ```python
 from eve_tools.tests import *
 import unittest
 
-test_config.set(cname="your character", structure_name="structure that you have docking access")
+test_config.set(cname="your character", structure_name="a player structure that you have docking access")
 unittest.main()
 ```
 
@@ -69,6 +83,8 @@ Ran 24 tests in 16.00s
 
 OK (skipped=4)
 ```
-This means your test configuration is incorrect (config does not have field ``structure_name`` and ``cname``). Use ``test_config.set()`` to configure your tests and rerun tests. You should see no skipping.
+This means either some endpoints are down (which cripples ``api``s), or your test configuration is incorrect. Use ``test_config.set()`` to configure your tests and rerun tests. 
 
-Feel free to leave your in-game character name. I will send you some isk if your feedback helps to improve this project.
+----
+
+PS: if you spot any errors or if you have some advice, feel free to [email me](hb.evetools@gmail.com). You could also send emails to _Hanbie Serine_ in game.
