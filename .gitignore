@@ -31,3 +31,6 @@ tox.ini
 
 # OS related #
 .DS_Store
+
+#Virtual Directory
+venv

@@ -13,6 +13,8 @@ from .search import (
     search_system_region_id,
     search_type,
     search_type_id,
+    search_station_by_name,
+    search_station_by_system_name,
 )
 from .market import (
     get_jita_market,
